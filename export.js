@@ -1,0 +1,167 @@
+// ──────────────────────────────────────────────
+// EXPORT
+// ──────────────────────────────────────────────
+document.getElementById('btn-export').addEventListener('click', () => openModal('modal-export'));
+
+document.getElementById('exp-svg').addEventListener('click', () => {
+  const bounds = getNodeBounds();
+  const pad    = 40;
+  const svgStr = buildExportSVG(bounds, pad);
+  const blob   = new Blob([svgStr], { type: 'image/svg+xml' });
+  const a      = document.createElement('a');
+  a.href       = URL.createObjectURL(blob);
+  a.download   = (getDiagramName() || 'flowchart') + '.svg';
+  a.click();
+  closeModal('modal-export');
+  notify('SVGを保存しました');
+});
+
+document.getElementById('exp-png').addEventListener('click', () => {
+  const bounds = getNodeBounds();
+  const pad    = 40;
+  const svgStr = buildExportSVG(bounds, pad);
+  const scale  = 2;
+  const w      = (bounds.maxX - bounds.minX + pad * 2) * scale;
+  const h      = (bounds.maxY - bounds.minY + pad * 2) * scale;
+  const blob   = new Blob([svgStr], { type: 'image/svg+xml' });
+  const url    = URL.createObjectURL(blob);
+  const img    = new Image();
+  img.onload = () => {
+    const cv  = document.createElement('canvas');
+    cv.width  = w; cv.height = h;
+    const ctx = cv.getContext('2d');
+    // 背景色を塗ってから描画（fillStyle を設定しないと透明になる）
+    ctx.fillStyle = state.canvasBg || (typeof THEMES !== 'undefined' ? THEMES[state.theme]?.bg : null) || '#f5f6f8';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    cv.toBlob(b => {
+      const a   = document.createElement('a');
+      a.href    = URL.createObjectURL(b);
+      a.download = (getDiagramName() || 'flowchart') + '.png';
+      a.click();
+      notify('PNGを保存しました');
+    });
+    URL.revokeObjectURL(url);
+  };
+  img.src = url;
+  closeModal('modal-export');
+});
+
+document.getElementById('exp-json').addEventListener('click', () => {
+  const name = getDiagramName();
+  const data = JSON.stringify(
+    { nodes: state.nodes, conns: state.conns, nextId: state.nextId, name },
+    null, 2
+  );
+  const blob = new Blob([data], { type: 'application/json' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = (name || 'flowchart') + '.json';
+  a.click();
+  closeModal('modal-export');
+  notify('JSONを保存しました');
+});
+
+document.getElementById('import-file').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data   = JSON.parse(ev.target.result);
+      state.nodes  = data.nodes  || {};
+      state.conns  = data.conns  || {};
+      state.nextId = data.nextId || 1;
+      if (data.name) setDiagramName(data.name);
+      snapshot(); renderAll(); fitView();
+      closeModal('modal-export');
+      notify('読み込みました');
+    } catch(ex) { notify('読み込みに失敗しました'); }
+  };
+  reader.readAsText(file);
+});
+
+// ──────────────────────────────────────────────
+// EXPORT HELPERS
+// ──────────────────────────────────────────────
+function getNodeBounds() {
+  const nodes = Object.values(state.nodes);
+  if (!nodes.length) return { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  nodes.forEach(n => {
+    const el = document.getElementById('node-' + n.id);
+    const h  = el ? el.offsetHeight : 40;
+    minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
+    maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + h);
+  });
+  return { minX, minY, maxX, maxY };
+}
+
+function buildExportSVG(bounds, pad) {
+  const W  = bounds.maxX - bounds.minX + pad * 2;
+  const H  = bounds.maxY - bounds.minY + pad * 2;
+  const ox = pad - bounds.minX;
+  const oy = pad - bounds.minY;
+
+  // DOM の computedStyle からノードの実際の色を取得
+  // フォールバックは THEMES.nodeStyles の bg/border/type（オブジェクト形式）
+  const resolveNodeStyle = (n) => {
+    const el = document.getElementById('node-' + n.id);
+    if (el) {
+      const bodyEl = el.querySelector('.node-body');
+      if (bodyEl) {
+        const s = window.getComputedStyle(bodyEl);
+        return {
+          bg:     s.backgroundColor || '#fff',
+          border: s.borderTopColor  || '#999',
+          text:   s.color           || '#222',
+        };
+      }
+    }
+    // DOM が取得できない場合のフォールバック
+    const theme  = (typeof THEMES !== 'undefined' && THEMES[state.theme]) ? THEMES[state.theme] : null;
+    const styled = theme ? theme.nodeStyles[n.type] : null;
+    return {
+      bg:     n.bgColor  || (styled?.bg)     || '#ffffff',
+      border: (styled?.border) || '#999999',
+      text:   (styled?.type)   || '#222222',
+    };
+  };
+
+  let paths = '';
+  Object.values(state.conns).forEach(c => {
+    const from = getPortPos(c.from, c.fromPort);
+    const to   = getPortPos(c.to,   c.toPort);
+    const p    = bezierPath(from, to, c.fromPort, c.toPort);
+    paths += `<path d="${p
+      .replace(/M ([0-9.-]+) ([0-9.-]+)/g, (_, x, y) => `M ${+x + ox} ${+y + oy}`)
+      .replace(/C ([0-9.-]+) ([0-9.-]+) ([0-9.-]+) ([0-9.-]+) ([0-9.-]+) ([0-9.-]+)/g,
+        (_, x1, y1, x2, y2, x3, y3) =>
+          `C ${+x1+ox} ${+y1+oy} ${+x2+ox} ${+y2+oy} ${+x3+ox} ${+y3+oy}`)
+    }" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>`;
+    if (c.label) {
+      const mx = (from.x + to.x) / 2 + ox;
+      const my = (from.y + to.y) / 2 + oy;
+      paths += `<text x="${mx}" y="${my - 4}" text-anchor="middle" font-size="10" fill="#888" font-family="monospace">${escHtml(c.label)}</text>`;
+    }
+  });
+
+  let rects = '';
+  Object.values(state.nodes).forEach(n => {
+    const el = document.getElementById('node-' + n.id);
+    const h  = el ? el.offsetHeight : 40;
+    const x  = n.x + ox, y = n.y + oy;
+    const { bg, border, text } = resolveNodeStyle(n);
+    rects += `<rect x="${x}" y="${y}" width="${n.w}" height="${h}" rx="6" fill="${bg}" stroke="${border}" stroke-width="1.5"/>`;
+    rects += `<text x="${x + n.w / 2}" y="${y + h / 2}" text-anchor="middle" dominant-baseline="central" font-size="12" fill="${text}" font-family="sans-serif">${escHtml(n.label)}</text>`;
+  });
+
+  const canvasBg = state.canvasBg || (typeof THEMES !== 'undefined' ? THEMES[state.theme]?.bg : null) || '#f5f6f8';
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W * 2}" height="${H * 2}" viewBox="0 0 ${W} ${H}">
+  <defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#666" stroke-width="1.5"/></marker></defs>
+  <rect width="${W}" height="${H}" fill="${canvasBg}"/>
+  ${paths}
+  ${rects}
+</svg>`;
+}
