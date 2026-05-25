@@ -149,7 +149,11 @@ function openLeftPanel() {
 function openRightPanel() {
   if (isMobile()) closeModal('mobile-node-menu');
 }
-
+// mobile-node-menu：背景タップで閉じる
+document.getElementById('mobile-node-menu')?.addEventListener('click', e => {
+  // .modal の中身をタップした時は閉じない、背景部分のみ
+  if (!e.target.closest('.modal')) closeModal('mobile-node-menu');
+});
 // ──────────────────────────────────────────────
 // PALETTE
 // ──────────────────────────────────────────────
