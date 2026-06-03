@@ -482,14 +482,15 @@ function renderConn(id) {
   g.appendChild(hit); g.appendChild(line);
 
   if (c.label) {
-    const mid = pathMidpoint(from, to);
+    const mid = bezierMidpoint(from, to, c.fromPort, c.toPort);
+    const labelW = 160, labelH = 24;
     const fo  = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
-    fo.setAttribute('x', mid.x - 50); fo.setAttribute('y', mid.y - 10);
-    fo.setAttribute('width', '100');  fo.setAttribute('height', '20');
+    fo.setAttribute('x', mid.x - labelW / 2); fo.setAttribute('y', mid.y - labelH / 2);
+    fo.setAttribute('width', labelW);  fo.setAttribute('height', labelH);
     fo.style.overflow = 'visible'; fo.style.pointerEvents = 'all';
     const div = document.createElement('div');
     div.className = 'conn-label';
-    div.style.cssText = 'position:static;transform:none;';
+    div.style.cssText = 'position:static;transform:none;text-align:center;width:fit-content;max-width:160px;margin:0 auto;';
     div.textContent = c.label;
     div.addEventListener('dblclick', () => {
       const nl = prompt('ラベル:', c.label);
@@ -524,8 +525,19 @@ function bezierPath(from, to, fp, tp) {
   return `M ${from.x} ${from.y} C ${c1x} ${c1y} ${c2x} ${c2y} ${to.x} ${to.y}`;
 }
 
-function pathMidpoint(from, to) {
-  return { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+function bezierMidpoint(from, to, fp, tp) {
+  const dx = Math.abs(to.x - from.x), dy = Math.abs(to.y - from.y);
+  const t  = Math.max(60, Math.min(200, Math.max(dx, dy) * 0.5));
+  let c1x = from.x, c1y = from.y, c2x = to.x, c2y = to.y;
+  if (fp === 'bottom') c1y += t; else if (fp === 'top') c1y -= t;
+  else if (fp === 'right') c1x += t; else if (fp === 'left') c1x -= t;
+  if (tp === 'top') c2y -= t; else if (tp === 'bottom') c2y += t;
+  else if (tp === 'left') c2x -= t; else if (tp === 'right') c2x += t;
+  // cubic bezier at t=0.5: 0.125*P0 + 0.375*P1 + 0.375*P2 + 0.125*P3
+  return {
+    x: 0.125 * from.x + 0.375 * c1x + 0.375 * c2x + 0.125 * to.x,
+    y: 0.125 * from.y + 0.375 * c1y + 0.375 * c2y + 0.125 * to.y
+  };
 }
 
 function drawTempConn(tc) {
