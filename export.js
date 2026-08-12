@@ -132,7 +132,7 @@ function buildExportSVG(bounds, pad) {
   Object.values(state.conns).forEach(c => {
     const from = getPortPos(c.from, c.fromPort);
     const to   = getPortPos(c.to,   c.toPort);
-    const p    = bezierPath(from, to, c.fromPort, c.toPort);
+    const p    = bezierPath(from, to, c.fromPort, c.toPort, c);
     paths += `<path d="${p
       .replace(/M ([0-9.-]+) ([0-9.-]+)/g, (_, x, y) => `M ${+x + ox} ${+y + oy}`)
       .replace(/C ([0-9.-]+) ([0-9.-]+) ([0-9.-]+) ([0-9.-]+) ([0-9.-]+) ([0-9.-]+)/g,
@@ -140,8 +140,9 @@ function buildExportSVG(bounds, pad) {
           `C ${+x1+ox} ${+y1+oy} ${+x2+ox} ${+y2+oy} ${+x3+ox} ${+y3+oy}`)
     }" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>`;
     if (c.label) {
-      const mx = (from.x + to.x) / 2 + ox;
-      const my = (from.y + to.y) / 2 + oy;
+      const mid = bezierMidpoint(from, to, c.fromPort, c.toPort, c);
+      const mx = mid.x + ox;
+      const my = mid.y + oy;
       paths += `<text x="${mx}" y="${my - 4}" text-anchor="middle" font-size="10" fill="#888" font-family="monospace">${escHtml(c.label)}</text>`;
     }
   });

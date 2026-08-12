@@ -40,7 +40,7 @@
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 5V2h3"/><path d="M11 2h3v3"/><path d="M14 11v3h-3"/><path d="M5 14H2v-3"/></svg>
     </button>
     <div class="tb-title"></div>
-    <input id="diagram-name-pc" class="pc-only-input" value="無題のフロー" spellcheck="false">
+    <input id="diagram-name-pc" class="pc-only-input" value="無題のフロー" spellcheck="false" aria-label="フロー名">
     <div class="tb-title"></div>
     <button class="tb-btn" id="btn-share" data-tip="共有URL">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="13" cy="3" r="1.5"/><circle cx="13" cy="13" r="1.5"/><circle cx="3" cy="8" r="1.5"/><line x1="4.5" y1="7.2" x2="11.5" y2="3.8"/><line x1="4.5" y1="8.8" x2="11.5" y2="12.2"/></svg>
@@ -82,10 +82,10 @@
         <svg id="svg-layer" width="4000" height="4000"></svg>
       </div>
       <div id="sel-box"></div>
-      <div id="zoom-controls">
-        <button class="zoom-btn" id="btn-zoom-out">−</button>
+      <div id="zoom-controls" aria-label="ズーム操作">
+        <button class="zoom-btn" id="btn-zoom-out" aria-label="縮小">−</button>
         <span id="zoom-label">100%</span>
-        <button class="zoom-btn" id="btn-zoom-in">+</button>
+        <button class="zoom-btn" id="btn-zoom-in" aria-label="拡大">+</button>
       </div>
       <div id="minimap">
         <canvas id="minimap-canvas"></canvas>
@@ -101,7 +101,7 @@
     <span>ノード: <span class="status-val" id="st-nodes">0</span></span>
     <span>接続: <span class="status-val" id="st-conns">0</span></span>
     <span>モード: <span class="status-val" id="st-mode">選択</span></span>
-    <span style="margin-left:auto">ダブルクリック: 新規ノード　C: 接続モード　Del: 削除</span>
+    <span style="margin-left:auto" id="st-save" aria-live="polite">自動保存</span>
   </div>
 </div>
 
@@ -118,7 +118,7 @@
   <div class="modal">
     <h3>共有URL</h3>
     <div class="share-url" id="share-url-text">生成中...</div>
-    <div style="font-size:10px;color:var(--text3);margin-bottom:4px;font-family:var(--mono)">URLをクリックでコピー</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:4px;font-family:var(--mono)">このURLで現在のフローを共有できます</div>
     <div class="modal-btn-row">
       <button class="modal-btn" id="share-copy">URLをコピー</button>
       <button class="modal-btn" onclick="closeModal('modal-share')">閉じる</button>
@@ -183,12 +183,14 @@
   <div class="modal">
     <h3>メニュー</h3>
     <div style="display:flex;flex-direction:column;gap:8px;">
-      <input id="diagram-name-mobile" class="mobile-only-input" value="無題のフロー" spellcheck="false">
-      <button class="modal-btn primary" id="settings-theme">🌙 ダーク / ☀️ ライト 切り替え</button>
-      <button class="modal-btn primary" id="settings-canvas-bg">🎨 キャンバス背景色</button>
-      <button class="modal-btn primary" id="settings-share">🔗 共有URL</button>
-      <button class="modal-btn primary" id="settings-new">📄 新規作成</button>
+      <input id="diagram-name-mobile" class="mobile-only-input" value="無題のフロー" spellcheck="false" aria-label="フロー名">
       <button class="modal-btn primary" id="settings-tpl">📋 テンプレート</button>
+      <button class="modal-btn primary" id="settings-export">↓ エクスポート・読み込み</button>
+      <button class="modal-btn" id="settings-share">🔗 共有URL</button>
+      <button class="modal-btn" id="settings-theme">◐ ダーク / ライト切り替え</button>
+      <button class="modal-btn" id="settings-canvas-bg">🎨 キャンバス背景色</button>
+      <button class="modal-btn" id="settings-reset">⌖ 表示位置をリセット</button>
+      <button class="modal-btn danger" id="settings-new">新しいフローを作成</button>
     </div>
     <div class="modal-btn-row">
       <button class="modal-btn" onclick="closeModal('modal-settings')">閉じる</button>
@@ -198,18 +200,12 @@
 
 <!-- MOBILE TOOLBAR -->
 <div id="mobile-toolbar">
-  <button class="mobile-fab icon-only mobile-top-left" id="m-add" title="ノードを追加">
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
-  </button>
-  <button class="mobile-fab icon-only mobile-top-right" id="m-settings" title="メニュー">
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="14" y2="12"/></svg>
-  </button>
   <div class="mobile-bottom-row">
+    <button class="mobile-fab icon-only primary" id="m-add" title="ノードを追加" aria-label="ノードを追加">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
+    </button>
     <button class="mobile-fab icon-only" id="m-connect" title="接続モード">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9.5 2.5l-7 7a2.121 2.121 0 0 0 3 3l7-7"/><path d="M6.5 13.5l-1 1"/><path d="M9.5 2.5l1-1"/><path d="M11 5l-4 4"/></svg>
-    </button>
-    <button class="mobile-fab icon-only" id="m-export" title="保存">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v8m-3-3 3 3 3-3"/><path d="M3 13h10"/></svg>
     </button>
     <button class="mobile-fab icon-only" id="m-undo" title="元に戻す">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8a5 5 0 1 1 1.5 3.5"/><polyline points="3,4 3,8 7,8"/></svg>
@@ -217,8 +213,8 @@
     <button class="mobile-fab icon-only" id="m-fit" title="全体を表示">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 5V2h3"/><path d="M11 2h3v3"/><path d="M14 11v3h-3"/><path d="M5 14H2v-3"/></svg>
     </button>
-    <button class="mobile-fab icon-only" id="m-reset" title="初期位置">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8a5 5 0 1 1 1.5 3.5"/><polyline points="3,4 3,8 7,8"/><circle cx="8" cy="8" r="1" fill="currentColor"/></svg>
+    <button class="mobile-fab icon-only" id="m-settings" title="メニュー" aria-label="メニュー">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="14" y2="12"/></svg>
     </button>
   </div>
 </div>

@@ -13,6 +13,8 @@ function autosave() {
       theme:    state.theme,
       // history は保存しない（リロード時に古い状態に戻る原因になるため）
     }));
+    const saveStatus = document.getElementById('st-save');
+    if (saveStatus) saveStatus.textContent = '自動保存済み';
   } catch(e) {}
 }
 

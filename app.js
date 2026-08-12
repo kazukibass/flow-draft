@@ -19,6 +19,8 @@ const state = {
   theme: 'light',
 };
 
+const MOBILE_BREAKPOINT = 900;
+
 const NODE_TYPES = [
   { type: 'start',      label: '開始',       color: '#4ade80', shape: 'circle'     },
   { type: 'end',        label: '終了',       color: '#f87171', shape: 'circle'     },
@@ -27,8 +29,8 @@ const NODE_TYPES = [
   { type: 'io',         label: 'I/O',        color: '#2dd4bf', shape: 'para'       },
   { type: 'db',         label: 'DB',         color: '#2dd4bf', shape: 'db'         },
   { type: 'api',        label: 'API',        color: '#a78bfa', shape: 'dashed'     },
-  { type: 'loop-start', label: 'Loop Start', color: '#6ab6f4', shape: 'loop-start' },
-  { type: 'loop-end',   label: 'Loop End',   color: '#f8a071', shape: 'loop-end'   },
+  { type: 'loop-start', label: 'ループ開始', color: '#6ab6f4', shape: 'loop-start' },
+  { type: 'loop-end',   label: 'ループ終了', color: '#f8a071', shape: 'loop-end'   },
 ];
 
 // 順: 終了, ループエンド, 分岐, 開始, ループスタート, プロセス, API, 白系×2
@@ -62,8 +64,23 @@ function notify(msg) {
   clearTimeout(notifTimer);
   notifTimer = setTimeout(() => notif.classList.remove('show'), 2000);
 }
-function openModal(id)  { document.getElementById(id)?.classList.add('open'); }
-function closeModal(id) { document.getElementById(id)?.classList.remove('open'); }
+let modalReturnFocus = null;
+function openModal(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  modalReturnFocus = document.activeElement;
+  el.classList.add('open');
+  el.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(() => el.querySelector('input:not([type="file"]), button, [tabindex="0"]')?.focus());
+}
+function closeModal(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove('open');
+  el.setAttribute('aria-hidden', 'true');
+  if (modalReturnFocus?.focus) modalReturnFocus.focus();
+  modalReturnFocus = null;
+}
 window.closeModal = closeModal;
 
 function canvasToWorld(cx, cy) {
@@ -74,7 +91,7 @@ function clientToCanvas(e) {
   const touch = e.touches ? e.touches[0] : e;
   return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
 }
-function isMobile() { return window.innerWidth <= 700; }
+function isMobile() { return window.innerWidth <= MOBILE_BREAKPOINT; }
 
 // ──────────────────────────────────────────────
 // DIAGRAM NAME (PC: #diagram-name-pc / Mobile: #diagram-name-mobile)
@@ -149,6 +166,17 @@ function openLeftPanel() {
 function openRightPanel() {
   if (isMobile()) closeModal('mobile-node-menu');
 }
+function closeRightPanel() {
+  state.selected.clear();
+  renderSelection();
+  updateRightPanel();
+}
+function bindPanelClose() {
+  document.getElementById('prop-close')?.addEventListener('click', closeRightPanel);
+}
+function panelHeader(title) {
+  return `<div class="prop-header"><div class="panel-label">${title}</div><button class="panel-close" id="prop-close" type="button" aria-label="プロパティを閉じる">×</button></div>`;
+}
 // mobile-node-menu：背景タップで閉じる
 document.getElementById('mobile-node-menu')?.addEventListener('click', e => {
   // .modal の中身をタップした時は閉じない、背景部分のみ
@@ -169,22 +197,36 @@ function shapePreviewSVG(t) {
   return s + `<rect x="3" y="4" width="22" height="12" rx="2" fill="none" stroke="${c}" stroke-width="1.2"/></svg>`;
 }
 
-function createPaletteItem(t) {
+function createPaletteItem(t, draggable = true) {
   const el = document.createElement('div');
   el.className    = 'palette-item';
-  el.draggable    = true;
+  el.draggable    = draggable;
   el.dataset.type = t.type;
+  el.setAttribute('role', 'button');
+  el.setAttribute('tabindex', '0');
+  el.setAttribute('aria-label', `${t.label}ノードを追加`);
   el.innerHTML    = `<div class="shape-preview">${shapePreviewSVG(t)}</div><div class="shape-label">${t.label}</div>`;
-  el.addEventListener('dragstart', e => e.dataTransfer.setData('nodeType', t.type));
-  el.addEventListener('touchstart', paletteTouchStart, { passive: true });
+  if (draggable) {
+    el.addEventListener('dragstart', e => e.dataTransfer.setData('nodeType', t.type));
+    el.addEventListener('touchstart', paletteTouchStart, { passive: true });
+  }
+  el.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    const centerX = (-state.panX + canvasWrap.clientWidth / 2) / state.zoom;
+    const centerY = (-state.panY + canvasWrap.clientHeight / 2) / state.zoom;
+    addNode(t.type, centerX - 70, centerY - 20);
+    closeModal('mobile-node-menu');
+    notify(`${t.label}を追加`);
+  });
   return el;
 }
 
 function buildPalette() {
   const palette    = document.getElementById('palette');
   const mobileGrid = document.getElementById('mobile-node-grid');
-  if (palette)    { palette.innerHTML    = ''; NODE_TYPES.forEach(t => palette.appendChild(createPaletteItem(t))); }
-  if (mobileGrid) { mobileGrid.innerHTML = ''; NODE_TYPES.forEach(t => mobileGrid.appendChild(createPaletteItem(t))); }
+  if (palette)    { palette.innerHTML    = ''; NODE_TYPES.forEach(t => palette.appendChild(createPaletteItem(t, true))); }
+  if (mobileGrid) { mobileGrid.innerHTML = ''; NODE_TYPES.forEach(t => mobileGrid.appendChild(createPaletteItem(t, false))); }
 }
 
 let paletteDragType = null, paletteDragEl = null;
@@ -264,10 +306,11 @@ function renderNode(id) {
 
   const isDecision = n.type === 'decision';
   const typeLabel  = NODE_TYPES.find(t => t.type === n.type)?.label || n.type;
+  const showType   = n.label.trim() !== typeLabel;
   const bodyStyle  = (n.bgColor && !isDecision) ? ` style="background:${n.bgColor}"` : '';
-  const inner      = `${isDecision ? '' : `<div class="node-type">${typeLabel}</div>`}<div class="node-label" id="label-${id}">${escHtml(n.label)}</div>${n.sublabel ? `<div class="node-sublabel">${escHtml(n.sublabel)}</div>` : ''}`;
+  const inner      = `${isDecision || !showType ? '' : `<div class="node-type">${typeLabel}</div>`}<div class="node-label" id="label-${id}">${escHtml(n.label)}</div>${n.sublabel ? `<div class="node-sublabel">${escHtml(n.sublabel)}</div>` : ''}`;
 
-  el.innerHTML = `<div class="node-inner">${isDecision ? `<div class="node-type">${typeLabel}</div>` : ''}<div class="node-body"${bodyStyle}>${inner}</div><div class="port top" data-port="top" data-node="${id}"></div><div class="port bottom" data-port="bottom" data-node="${id}"></div><div class="port left" data-port="left" data-node="${id}"></div><div class="port right" data-port="right" data-node="${id}"></div><div class="resize-handle" data-node="${id}"></div></div>`;
+  el.innerHTML = `<div class="node-inner">${isDecision && showType ? `<div class="node-type">${typeLabel}</div>` : ''}<div class="node-body"${bodyStyle}>${inner}</div><div class="port top" data-port="top" data-node="${id}"></div><div class="port bottom" data-port="bottom" data-node="${id}"></div><div class="port left" data-port="left" data-node="${id}"></div><div class="port right" data-port="right" data-node="${id}"></div><div class="resize-handle" data-node="${id}"></div></div>`;
   el.querySelectorAll('.port').forEach(p => {
     p.addEventListener('mousedown', portMouseDown);
     p.addEventListener('touchstart', portTouchStart, { passive: false });
@@ -462,7 +505,7 @@ function renderConn(id) {
   if (!c) return;
   const from = getPortPos(c.from, c.fromPort);
   const to   = getPortPos(c.to,   c.toPort);
-  const path = bezierPath(from, to, c.fromPort, c.toPort);
+  const path = bezierPath(from, to, c.fromPort, c.toPort, c);
   const g    = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   g.dataset.connId = id;
 
@@ -482,7 +525,7 @@ function renderConn(id) {
   g.appendChild(hit); g.appendChild(line);
 
   if (c.label) {
-    const mid = bezierMidpoint(from, to, c.fromPort, c.toPort);
+    const mid = bezierMidpoint(from, to, c.fromPort, c.toPort, c);
     const labelW = 160, labelH = 24;
     const fo  = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
     fo.setAttribute('x', mid.x - labelW / 2); fo.setAttribute('y', mid.y - labelH / 2);
@@ -492,6 +535,8 @@ function renderConn(id) {
     div.className = 'conn-label';
     div.style.cssText = 'position:static;transform:none;text-align:center;width:fit-content;max-width:160px;margin:0 auto;';
     div.textContent = c.label;
+    div.title = 'ドラッグして線の曲がり方を調整';
+    div.addEventListener('pointerdown', e => startConnLabelDrag(e, id, mid));
     div.addEventListener('dblclick', () => {
       const nl = prompt('ラベル:', c.label);
       if (nl !== null) { c.label = nl; snapshot(); renderConns(); }
@@ -514,30 +559,87 @@ function selectConn(id) {
   updateRightPanel();
 }
 
-function bezierPath(from, to, fp, tp) {
-  const dx = Math.abs(to.x - from.x), dy = Math.abs(to.y - from.y);
-  const t  = Math.max(60, Math.min(200, Math.max(dx, dy) * 0.5));
+function portDirection(port) {
+  if (port === 'top')    return { x: 0,  y: -1 };
+  if (port === 'bottom') return { x: 0,  y: 1 };
+  if (port === 'left')   return { x: -1, y: 0 };
+  return { x: 1, y: 0 };
+}
+
+function bezierGeometry(from, to, fp, tp, conn = null) {
+  const distance = Math.hypot(to.x - from.x, to.y - from.y);
+  // 固定60pxだと近いノード間で制御点が交差するため、距離に比例させる
+  const tangent = Math.max(16, Math.min(96, distance * 0.24));
+  const fromDir = portDirection(fp);
+  const toDir   = portDirection(tp);
   let c1x = from.x, c1y = from.y, c2x = to.x, c2y = to.y;
-  if (fp === 'bottom') c1y += t; else if (fp === 'top') c1y -= t;
-  else if (fp === 'right') c1x += t; else if (fp === 'left') c1x -= t;
-  if (tp === 'top') c2y -= t; else if (tp === 'bottom') c2y += t;
-  else if (tp === 'left') c2x -= t; else if (tp === 'right') c2x += t;
+  c1x += fromDir.x * tangent;
+  c1y += fromDir.y * tangent;
+  // 終点側の制御点は、ポートから外向き方向へ置く
+  c2x += toDir.x * tangent;
+  c2y += toDir.y * tangent;
+
+  const defaultMid = {
+    x: 0.125 * from.x + 0.375 * c1x + 0.375 * c2x + 0.125 * to.x,
+    y: 0.125 * from.y + 0.375 * c1y + 0.375 * c2y + 0.125 * to.y,
+  };
+
+  if (Number.isFinite(conn?.bendX) && Number.isFinite(conn?.bendY)) {
+    // 2つの制御点を同量動かすと、中点はその75%だけ動く
+    const adjustX = (conn.bendX - defaultMid.x) * 4 / 3;
+    const adjustY = (conn.bendY - defaultMid.y) * 4 / 3;
+    c1x += adjustX; c1y += adjustY;
+    c2x += adjustX; c2y += adjustY;
+  }
+
+  return {
+    c1x, c1y, c2x, c2y,
+    mid: {
+      x: 0.125 * from.x + 0.375 * c1x + 0.375 * c2x + 0.125 * to.x,
+      y: 0.125 * from.y + 0.375 * c1y + 0.375 * c2y + 0.125 * to.y,
+    },
+  };
+}
+
+function bezierPath(from, to, fp, tp, conn = null) {
+  const { c1x, c1y, c2x, c2y } = bezierGeometry(from, to, fp, tp, conn);
   return `M ${from.x} ${from.y} C ${c1x} ${c1y} ${c2x} ${c2y} ${to.x} ${to.y}`;
 }
 
-function bezierMidpoint(from, to, fp, tp) {
-  const dx = Math.abs(to.x - from.x), dy = Math.abs(to.y - from.y);
-  const t  = Math.max(60, Math.min(200, Math.max(dx, dy) * 0.5));
-  let c1x = from.x, c1y = from.y, c2x = to.x, c2y = to.y;
-  if (fp === 'bottom') c1y += t; else if (fp === 'top') c1y -= t;
-  else if (fp === 'right') c1x += t; else if (fp === 'left') c1x -= t;
-  if (tp === 'top') c2y -= t; else if (tp === 'bottom') c2y += t;
-  else if (tp === 'left') c2x -= t; else if (tp === 'right') c2x += t;
-  // cubic bezier at t=0.5: 0.125*P0 + 0.375*P1 + 0.375*P2 + 0.125*P3
-  return {
-    x: 0.125 * from.x + 0.375 * c1x + 0.375 * c2x + 0.125 * to.x,
-    y: 0.125 * from.y + 0.375 * c1y + 0.375 * c2y + 0.125 * to.y
+function bezierMidpoint(from, to, fp, tp, conn = null) {
+  return bezierGeometry(from, to, fp, tp, conn).mid;
+}
+
+function startConnLabelDrag(e, id, startMid) {
+  if (e.button !== undefined && e.button !== 0) return;
+  const c = state.conns[id];
+  if (!c) return;
+  e.preventDefault();
+  e.stopPropagation();
+
+  const startCanvas = clientToCanvas(e);
+  const startWorld  = canvasToWorld(startCanvas.x, startCanvas.y);
+  const offsetX = startMid.x - startWorld.x;
+  const offsetY = startMid.y - startWorld.y;
+  let moved = false;
+
+  const onMove = e2 => {
+    const cp = clientToCanvas(e2);
+    const w  = canvasToWorld(cp.x, cp.y);
+    c.bendX = w.x + offsetX;
+    c.bendY = w.y + offsetY;
+    moved = true;
+    renderConns();
   };
+  const onUp = () => {
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    document.removeEventListener('pointercancel', onUp);
+    if (moved) snapshot();
+  };
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
+  document.addEventListener('pointercancel', onUp);
 }
 
 function drawTempConn(tc) {
@@ -832,7 +934,8 @@ function updateRightPanel() {
     else renderNodeProps(id);
   } else if (state.selected.size > 1) {
     openRightPanel();
-    rightPanel.innerHTML = `<div class="prop-section"><div class="panel-label">選択中</div><div style="font-size:11px;color:var(--text2)">${state.selected.size}個のノード</div></div>`;
+    rightPanel.innerHTML = `<div class="prop-section">${panelHeader('選択中')}<div style="font-size:11px;color:var(--text2)">${state.selected.size}個のノード</div></div>`;
+    bindPanelClose();
   } else {
     rightPanel.innerHTML = '';
   }
@@ -843,15 +946,18 @@ function buildColorPalette(n, id) {
   const row    = rightPanel.querySelector('#color-palette-row');
   if (!row) return;
   row.innerHTML =
-    `<div class="color-dot bg-dot${(n.bgColor || '') === '' ? ' active' : ''}" style="background:var(--node-border);border:1px dashed var(--border2);" data-color=""></div>` +
+    `<div class="color-dot bg-dot${(n.bgColor || '') === '' ? ' active' : ''}" role="button" tabindex="0" aria-label="標準の背景色" style="background:var(--node-border);border:1px dashed var(--border2);" data-color=""></div>` +
     colors.map(c =>
-      `<div class="color-dot bg-dot${(n.bgColor || '') === c ? ' active' : ''}" style="background:${c}" data-color="${c}"></div>`
+      `<div class="color-dot bg-dot${(n.bgColor || '') === c ? ' active' : ''}" role="button" tabindex="0" aria-label="背景色 ${c}" style="background:${c}" data-color="${c}"></div>`
     ).join('') +
-    `<input type="color" id="bg-color-picker" value="${n.bgColor || '#ffffff'}" style="width:18px;height:18px;border-radius:50%;border:2px solid transparent;padding:0;cursor:pointer;background:transparent;" title="カスタム">`;
+    `<input type="color" id="bg-color-picker" value="${n.bgColor || '#ffffff'}" aria-label="カスタム背景色" style="width:18px;height:18px;border-radius:50%;border:2px solid transparent;padding:0;cursor:pointer;background:transparent;" title="カスタム">`;
   row.querySelectorAll('.bg-dot').forEach(dot => {
     dot.addEventListener('click', () => {
       n.bgColor = dot.dataset.color;
       snapshot(); renderNode(id); buildColorPalette(n, id);
+    });
+    dot.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); dot.click(); }
     });
   });
   const picker = row.querySelector('#bg-color-picker');
@@ -866,18 +972,18 @@ function renderNodeProps(id) {
   if (!n) return;
   rightPanel.innerHTML = `
     <div class="prop-section">
-      <div class="panel-label">プロパティ</div>
+      ${panelHeader('プロパティ')}
       <div class="prop-row">
         <div class="prop-label">ラベル</div>
-        <textarea class="prop-input" id="prop-label" rows="2">${n.label}</textarea>
+        <textarea class="prop-input" id="prop-label" rows="2" aria-label="ラベル">${n.label}</textarea>
       </div>
       <div class="prop-row">
         <div class="prop-label">サブテキスト</div>
-        <textarea class="prop-input" id="prop-sub" rows="1" style="overflow:hidden;field-sizing:content;min-height:28px">${n.sublabel || ''}</textarea>
+        <textarea class="prop-input" id="prop-sub" rows="1" aria-label="サブテキスト" style="overflow:hidden;field-sizing:content;min-height:28px">${n.sublabel || ''}</textarea>
       </div>
       <div class="prop-row">
         <div class="prop-label">ノードタイプ</div>
-        <select class="prop-select" id="prop-type">
+        <select class="prop-select" id="prop-type" aria-label="ノードタイプ">
           ${NODE_TYPES.map(t => `<option value="${t.type}"${t.type === n.type ? ' selected' : ''}>${t.label}</option>`).join('')}
         </select>
       </div>
@@ -889,6 +995,7 @@ function renderNodeProps(id) {
     <div class="prop-section">
       <button class="del-btn" id="prop-del">ノードを削除</button>
     </div>`;
+  bindPanelClose();
   buildColorPalette(n, id);
   document.getElementById('prop-label').addEventListener('input', e => { n.label = e.target.value; renderNode(id); });
   document.getElementById('prop-label').addEventListener('change', () => snapshot());
@@ -910,16 +1017,29 @@ function renderConnProps(id) {
   if (!c) return;
   rightPanel.innerHTML = `
     <div class="prop-section">
-      <div class="panel-label">接続</div>
+      ${panelHeader('接続')}
       <div class="prop-row">
         <div class="prop-label">ラベル</div>
-        <input class="prop-input" id="conn-label" value="${c.label || ''}">
+        <input class="prop-input" id="conn-label" value="${c.label || ''}" aria-label="接続ラベル">
       </div>
+      <div class="prop-help">ラベルをドラッグすると線の曲がり方を調整できます。</div>
     </div>
+    ${Number.isFinite(c.bendX) && Number.isFinite(c.bendY) ? `
+    <div class="prop-section">
+      <button class="secondary-btn" id="conn-reset-bend">曲がりを自動に戻す</button>
+    </div>` : ''}
     <div class="prop-section">
       <button class="del-btn" id="conn-del">接続を削除</button>
     </div>`;
+  bindPanelClose();
   document.getElementById('conn-label').addEventListener('change', e => { c.label = e.target.value; snapshot(); renderConns(); });
+  document.getElementById('conn-reset-bend')?.addEventListener('click', () => {
+    delete c.bendX;
+    delete c.bendY;
+    snapshot();
+    renderConns();
+    renderConnProps(id);
+  });
   document.getElementById('conn-del').addEventListener('click', () => {
     removeConnEl(id); delete state.conns[id]; snapshot(); updateStatus(); renderConns();
     state.selected.clear(); updateRightPanel();
@@ -979,7 +1099,8 @@ function fitView() {
   const effectiveH = vh - safeOffset;
   const zx = (vw          - pad * 2) / (maxX - minX || 1);
   const zy = (effectiveH  - pad * 2) / (maxY - minY || 1);
-  state.zoom = Math.max(0.2, Math.min(2, Math.min(zx, zy)));
+  // 小さい図を必要以上に拡大せず、全体像を安定して見せる
+  state.zoom = Math.max(0.2, Math.min(1, Math.min(zx, zy)));
   state.panX = (vw         - (maxX - minX) * state.zoom) / 2 - minX * state.zoom;
   state.panY = (effectiveH - (maxY - minY) * state.zoom) / 2 - minY * state.zoom;
   applyTransform(); updateZoomLabel(); drawMinimap();
@@ -1090,10 +1211,6 @@ function loadFromUrl() {
 document.getElementById('btn-share').addEventListener('click', () => {
   document.getElementById('share-url-text').textContent = generateShareUrl();
   openModal('modal-share');
-});
-document.getElementById('share-url-text').addEventListener('click', () => {
-  navigator.clipboard.writeText(document.getElementById('share-url-text').textContent)
-    .then(() => notify('URLをコピーしました'));
 });
 document.getElementById('share-copy').addEventListener('click', () => {
   navigator.clipboard.writeText(document.getElementById('share-url-text').textContent)
@@ -1239,13 +1356,40 @@ document.getElementById('btn-theme')?.addEventListener('click', toggleTheme);
 
 // modal overlay close
 document.querySelectorAll('.modal-overlay').forEach(el => {
-  el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
+  el.addEventListener('click', e => { if (e.target === el) closeModal(el.id); });
 });
+
+// アイコンだけの操作とダイアログにも、読み上げ可能な名前と状態を付ける
+document.querySelectorAll('button[data-tip], button[title]').forEach(button => {
+  if (!button.hasAttribute('aria-label')) {
+    button.setAttribute('aria-label', button.dataset.tip || button.title);
+  }
+});
+document.querySelectorAll('.modal-overlay, #mobile-node-menu').forEach(layer => {
+  layer.setAttribute('role', 'dialog');
+  layer.setAttribute('aria-modal', 'true');
+  layer.setAttribute('aria-hidden', 'true');
+  const title = layer.querySelector('h3');
+  if (title) {
+    title.id = `${layer.id}-title`;
+    layer.setAttribute('aria-labelledby', title.id);
+  }
+});
+notif.setAttribute('role', 'status');
+notif.setAttribute('aria-live', 'polite');
 
 // ──────────────────────────────────────────────
 // KEYBOARD
 // ──────────────────────────────────────────────
 document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const openLayer = [...document.querySelectorAll('.modal-overlay.open, #mobile-node-menu.open')].pop();
+    if (openLayer) {
+      e.preventDefault();
+      closeModal(openLayer.id);
+      return;
+    }
+  }
   if (e.altKey) canvasWrap.classList.add('mode-connect');
   if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
   if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -1304,6 +1448,14 @@ const mExport   = document.getElementById('m-export');
 const mUndo     = document.getElementById('m-undo');
 const mSettings = document.getElementById('m-settings');
 
+function resetViewport() {
+  state.zoom = 1;
+  state.panX = canvasWrap.clientWidth / 2 - 200;
+  state.panY = 40;
+  applyTransform(); updateZoomLabel(); drawMinimap();
+  notify('初期位置に戻しました');
+}
+
 if (mAdd) {
   mAdd.addEventListener('click', () => openLeftPanel());
 }
@@ -1329,15 +1481,7 @@ if (mConnect) {
 if (mExport)  { mExport.addEventListener('click',  () => openModal('modal-export')); }
 if (mUndo)    { mUndo.addEventListener('click',    () => { undo(); notify('元に戻しました'); }); }
 if (mFit)     { mFit.addEventListener('click',     () => { fitView(); notify('全体を表示'); }); }
-if (mReset)   {
-  mReset.addEventListener('click', () => {
-    state.zoom = 1;
-    state.panX = canvasWrap.clientWidth / 2 - 200;
-    state.panY = 40;
-    applyTransform(); updateZoomLabel(); drawMinimap();
-    notify('初期位置に戻しました');
-  });
-}
+if (mReset)   { mReset.addEventListener('click', resetViewport); }
 if (mSettings) { mSettings.addEventListener('click', () => openModal('modal-settings')); }
 
 document.getElementById('settings-theme')?.addEventListener('click', () => {
@@ -1352,6 +1496,14 @@ document.getElementById('settings-share')?.addEventListener('click', () => {
   closeModal('modal-settings');
   document.getElementById('share-url-text').textContent = generateShareUrl();
   openModal('modal-share');
+});
+document.getElementById('settings-export')?.addEventListener('click', () => {
+  closeModal('modal-settings');
+  openModal('modal-export');
+});
+document.getElementById('settings-reset')?.addEventListener('click', () => {
+  closeModal('modal-settings');
+  resetViewport();
 });
 document.getElementById('settings-new')?.addEventListener('click', () => {
   closeModal('modal-settings'); openModal('modal-new');
