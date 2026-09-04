@@ -50,7 +50,7 @@ document.getElementById('exp-png').addEventListener('click', () => {
 document.getElementById('exp-json').addEventListener('click', () => {
   const name = getDiagramName();
   const data = JSON.stringify(
-    { nodes: state.nodes, conns: state.conns, nextId: state.nextId, name },
+    { nodes: state.nodes, conns: state.conns, groups: state.groups, nextId: state.nextId, name },
     null, 2
   );
   const blob = new Blob([data], { type: 'application/json' });
@@ -71,6 +71,7 @@ document.getElementById('import-file').addEventListener('change', e => {
       const data   = JSON.parse(ev.target.result);
       state.nodes  = data.nodes  || {};
       state.conns  = data.conns  || {};
+      state.groups = data.groups || {};
       state.nextId = data.nextId || 1;
       if (data.name) setDiagramName(data.name);
       snapshot(); renderAll(); fitView();
@@ -128,6 +129,19 @@ function buildExportSVG(bounds, pad) {
     };
   };
 
+  let regions = '';
+  Object.values(state.groups).forEach(group => {
+    groupIslands(group).forEach((boxes, islandIndex) => {
+      const d = organicPath(boxes).replace(/([MQ]) ([0-9.-]+) ([0-9.-]+)/g,
+        (_, command, x, y) => `${command} ${+x + ox} ${+y + oy}`);
+      if (!d) return;
+      regions += `<path d="${d}" fill="${group.color}18" stroke="${group.color}" stroke-opacity="0.55" stroke-width="1.5" stroke-dasharray="7 5"/>`;
+      const top = boxes.reduce((best, box) => box.y < best.y ? box : best, boxes[0]);
+      const label = islandIndex ? `${group.label} · ${islandIndex + 1}` : group.label;
+      regions += `<text x="${top.x + ox + 10}" y="${top.y + oy - 8}" font-size="11" fill="${group.color}" font-family="monospace">${escHtml(label)}</text>`;
+    });
+  });
+
   let paths = '';
   Object.values(state.conns).forEach(c => {
     const from = getPortPos(c.from, c.fromPort);
@@ -162,6 +176,7 @@ function buildExportSVG(bounds, pad) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W * 2}" height="${H * 2}" viewBox="0 0 ${W} ${H}">
   <defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#666" stroke-width="1.5"/></marker></defs>
   <rect width="${W}" height="${H}" fill="${canvasBg}"/>
+  ${regions}
   ${paths}
   ${rects}
 </svg>`;

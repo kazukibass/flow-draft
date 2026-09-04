@@ -4,6 +4,7 @@
 const state = {
   nodes: {},
   conns: {},
+  groups: {},
   zoom: 1,
   panX: 0,
   panY: 0,
@@ -57,6 +58,7 @@ const notif      = document.getElementById('notif');
 // ──────────────────────────────────────────────
 function uid() { return 'n' + (state.nextId++); }
 function cid() { return 'c' + (state.nextId++); }
+function gid() { return 'g' + (state.nextId++); }
 let notifTimer;
 function notify(msg) {
   notif.textContent = msg;
@@ -123,6 +125,7 @@ function snapshot() {
   const s = JSON.stringify({
     nodes:  JSON.parse(JSON.stringify(state.nodes)),
     conns:  JSON.parse(JSON.stringify(state.conns)),
+    groups: JSON.parse(JSON.stringify(state.groups)),
     nextId: state.nextId,
     name:   getDiagramName(),
   });
@@ -146,6 +149,7 @@ function redo() {
 function restore(data) {
   state.nodes  = data.nodes;
   state.conns  = data.conns;
+  state.groups = data.groups || {};
   state.nextId = data.nextId;
   if (data.name !== undefined) setDiagramName(data.name);
   state.selected.clear();
@@ -326,6 +330,12 @@ function removeNode(id) {
   const el = document.getElementById('node-' + id);
   if (el) el.remove();
   delete state.nodes[id];
+  Object.values(state.groups).forEach(group => {
+    group.nodeIds = group.nodeIds.filter(nodeId => nodeId !== id);
+  });
+  Object.keys(state.groups).forEach(groupId => {
+    if (state.groups[groupId].nodeIds.length < 2) delete state.groups[groupId];
+  });
   Object.keys(state.conns).forEach(cid => {
     const c = state.conns[cid];
     if (c.from === id || c.to === id) { removeConnEl(cid); delete state.conns[cid]; }
@@ -488,8 +498,98 @@ function addConn(fromId, fromPort, toId, toPort, label) {
 
 function renderConns() {
   svgLayer.innerHTML = '';
+  renderGroups();
   Object.keys(state.conns).forEach(id => renderConn(id));
   if (state.tempConn) drawTempConn(state.tempConn);
+}
+
+const GROUP_COLORS = ['#5b9cf6','#a78bfa','#2dd4bf','#4ade80','#fbbf24','#f97316','#f87171'];
+
+function createGroupFromSelection() {
+  const nodeIds = [...state.selected].filter(id => state.nodes[id]);
+  if (nodeIds.length < 2) return notify('2個以上のノードを選択してください');
+  const label = prompt('処理領域の名前:', '処理グループ');
+  if (label === null) return;
+  const id = gid();
+  state.groups[id] = {
+    id, label: label.trim() || '処理グループ', nodeIds,
+    color: GROUP_COLORS[Object.keys(state.groups).length % GROUP_COLORS.length],
+    padding: 28, splitDistance: 150
+  };
+  snapshot(); renderConns(); updateRightPanel();
+  notify('処理領域を作成しました');
+}
+
+function nodeBox(id, padding = 0) {
+  const n = state.nodes[id]; if (!n) return null;
+  const el = document.getElementById('node-' + id);
+  const inner = el?.querySelector('.node-inner');
+  const h = inner ? inner.offsetHeight : (el ? el.offsetHeight : 40);
+  return { x:n.x-padding, y:n.y-padding, w:n.w+padding*2, h:h+padding*2 };
+}
+function boxGap(a, b) {
+  const dx = Math.max(0, Math.max(a.x,b.x)-Math.min(a.x+a.w,b.x+b.w));
+  const dy = Math.max(0, Math.max(a.y,b.y)-Math.min(a.y+a.h,b.y+b.h));
+  return Math.hypot(dx,dy);
+}
+function groupIslands(group) {
+  const items = group.nodeIds.map(id=>({id,box:nodeBox(id,group.padding??28)})).filter(x=>x.box);
+  const unseen = new Set(items.map(x=>x.id));
+  const byId = Object.fromEntries(items.map(x=>[x.id,x.box])), islands=[];
+  while (unseen.size) {
+    const seed=unseen.values().next().value; unseen.delete(seed);
+    const island=[seed], queue=[seed];
+    while(queue.length) {
+      const current=queue.shift();
+      [...unseen].forEach(other=>{
+        if(boxGap(byId[current],byId[other]) <= (group.splitDistance??150)) {
+          unseen.delete(other); island.push(other); queue.push(other);
+        }
+      });
+    }
+    islands.push(island.map(id=>byId[id]));
+  }
+  return islands;
+}
+function convexHull(points) {
+  if(points.length<=2) return points;
+  const sorted=[...points].sort((a,b)=>a.x-b.x||a.y-b.y);
+  const cross=(o,a,b)=>(a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x);
+  const lower=[]; sorted.forEach(p=>{while(lower.length>=2&&cross(lower.at(-2),lower.at(-1),p)<=0)lower.pop();lower.push(p);});
+  const upper=[]; [...sorted].reverse().forEach(p=>{while(upper.length>=2&&cross(upper.at(-2),upper.at(-1),p)<=0)upper.pop();upper.push(p);});
+  lower.pop(); upper.pop(); return lower.concat(upper);
+}
+function organicPath(boxes) {
+  const points=[];
+  boxes.forEach(b=>{
+    const r=Math.min(18,b.w/5,b.h/4);
+    points.push({x:b.x+r,y:b.y},{x:b.x+b.w-r,y:b.y},{x:b.x+b.w,y:b.y+r},{x:b.x+b.w,y:b.y+b.h-r},{x:b.x+b.w-r,y:b.y+b.h},{x:b.x+r,y:b.y+b.h},{x:b.x,y:b.y+b.h-r},{x:b.x,y:b.y+r});
+  });
+  const hull=convexHull(points); if(!hull.length)return '';
+  const mids=hull.map((p,i)=>({x:(p.x+hull[(i+1)%hull.length].x)/2,y:(p.y+hull[(i+1)%hull.length].y)/2}));
+  let d=`M ${mids.at(-1).x} ${mids.at(-1).y}`;
+  hull.forEach((p,i)=>{d+=` Q ${p.x} ${p.y} ${mids[i].x} ${mids[i].y}`;});
+  return d+' Z';
+}
+function renderGroups() {
+  Object.values(state.groups).forEach(group=>{
+    group.nodeIds=group.nodeIds.filter(id=>state.nodes[id]);
+    groupIslands(group).forEach((boxes,islandIndex)=>{
+      const pathData=organicPath(boxes); if(!pathData)return;
+      const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+      g.classList.add('process-region'); g.dataset.groupId=group.id;
+      const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+      path.setAttribute('d',pathData); path.setAttribute('fill',group.color+'18');
+      path.setAttribute('stroke',group.color); path.setAttribute('stroke-opacity','0.55');
+      path.setAttribute('stroke-width','1.5'); path.setAttribute('stroke-dasharray','7 5');
+      g.appendChild(path);
+      const top=boxes.reduce((best,b)=>b.y<best.y?b:best,boxes[0]);
+      const text=document.createElementNS('http://www.w3.org/2000/svg','text');
+      text.classList.add('process-region-label'); text.setAttribute('x',top.x+10); text.setAttribute('y',top.y-8);
+      text.setAttribute('fill',group.color); text.textContent=islandIndex?`${group.label} · ${islandIndex+1}`:group.label;
+      g.appendChild(text); svgLayer.appendChild(g);
+    });
+  });
 }
 
 function ensureDefs() {
@@ -660,6 +760,8 @@ function renderSelection() {
     const el = document.getElementById('node-' + id);
     if (el) el.classList.toggle('selected', state.selected.has(id));
   });
+  const groupButton = document.getElementById('btn-group');
+  if (groupButton) groupButton.disabled = [...state.selected].filter(id => state.nodes[id]).length < 2;
   renderConns();
 }
 
@@ -934,11 +1036,45 @@ function updateRightPanel() {
     else renderNodeProps(id);
   } else if (state.selected.size > 1) {
     openRightPanel();
-    rightPanel.innerHTML = `<div class="prop-section">${panelHeader('選択中')}<div style="font-size:11px;color:var(--text2)">${state.selected.size}個のノード</div></div>`;
+    rightPanel.innerHTML = `<div class="prop-section">${panelHeader('選択中')}<div style="font-size:11px;color:var(--text2);margin-bottom:10px">${state.selected.size}個のノード</div><button class="modal-btn primary" id="panel-create-group" style="width:100%">処理領域にまとめる</button></div>`;
     bindPanelClose();
+    document.getElementById('panel-create-group')?.addEventListener('click', createGroupFromSelection);
+    renderGroupControls([...state.selected].filter(id => state.nodes[id]));
   } else {
     rightPanel.innerHTML = '';
   }
+}
+
+function renderGroupControls(nodeIds) {
+  const groups = Object.values(state.groups).filter(group => group.nodeIds.some(id => nodeIds.includes(id)));
+  if (!groups.length) return;
+  const section = document.createElement('div');
+  section.className = 'prop-section';
+  section.innerHTML = '<div class="panel-label">処理領域</div>';
+  groups.forEach(group => {
+    const row = document.createElement('div');
+    row.className = 'group-control';
+    const label = document.createElement('span');
+    label.className = 'group-control-label';
+    label.style.setProperty('--group-color', group.color);
+    label.textContent = group.label;
+    const rename = document.createElement('button');
+    rename.className = 'secondary-btn'; rename.textContent = '名称変更';
+    rename.addEventListener('click', () => {
+      const next = prompt('処理領域の名前:', group.label);
+      if (next === null) return;
+      group.label = next.trim() || group.label;
+      snapshot(); renderConns(); updateRightPanel();
+    });
+    const remove = document.createElement('button');
+    remove.className = 'secondary-btn group-remove'; remove.textContent = '解除';
+    remove.addEventListener('click', () => {
+      delete state.groups[group.id];
+      snapshot(); renderConns(); updateRightPanel(); notify('処理領域を解除しました');
+    });
+    row.append(label, rename, remove); section.appendChild(row);
+  });
+  rightPanel.appendChild(section);
 }
 
 function buildColorPalette(n, id) {
@@ -1190,7 +1326,7 @@ function updateStatus() {
 // SHARE URL
 // ──────────────────────────────────────────────
 function generateShareUrl() {
-  const data    = { nodes: state.nodes, conns: state.conns, nextId: state.nextId, name: getDiagramName() };
+  const data    = { nodes: state.nodes, conns: state.conns, groups: state.groups, nextId: state.nextId, name: getDiagramName() };
   const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(data))));
   return window.location.href.split('?')[0] + '?d=' + encoded;
 }
@@ -1202,6 +1338,7 @@ function loadFromUrl() {
     const data = JSON.parse(decodeURIComponent(escape(atob(d))));
     state.nodes  = data.nodes  || {};
     state.conns  = data.conns  || {};
+    state.groups = data.groups || {};
     state.nextId = data.nextId || 1;
     if (data.name) setDiagramName(data.name);
     return true;
@@ -1297,7 +1434,7 @@ function buildTplGrid() {
       snapshot(); // 適用前を履歴に保存
       Object.keys(state.nodes).forEach(id => { const el = document.getElementById('node-' + id); if (el) el.remove(); });
       Object.keys(state.conns).forEach(id => removeConnEl(id));
-      state.nodes = {}; state.conns = {}; state.selected.clear();
+      state.nodes = {}; state.conns = {}; state.groups = {}; state.selected.clear();
       svgLayer.innerHTML = ''; state.nextId = 1;
       setDiagramName(t.name);
       const origSnap = window.snapshot; window.snapshot = () => {};
@@ -1318,7 +1455,7 @@ document.getElementById('btn-tpl').addEventListener('click', () => { buildTplGri
 document.getElementById('btn-new').addEventListener('click', () => openModal('modal-new'));
 document.getElementById('confirm-new').addEventListener('click', () => {
   Object.keys(state.nodes).forEach(id => { const el = document.getElementById('node-' + id); if (el) el.remove(); });
-  state.nodes = {}; state.conns = {}; state.selected.clear(); svgLayer.innerHTML = '';
+  state.nodes = {}; state.conns = {}; state.groups = {}; state.selected.clear(); svgLayer.innerHTML = '';
   state.nextId = 1;
   setDiagramName('無題のフロー');
   applyCanvasBg('', '', false);
@@ -1333,6 +1470,7 @@ document.getElementById('btn-redo').addEventListener('click', redo);
 // CONN / SELECT
 document.getElementById('btn-conn').addEventListener('click',   () => setMode('connect'));
 document.getElementById('btn-select').addEventListener('click', () => setMode('select'));
+document.getElementById('btn-group').addEventListener('click', createGroupFromSelection);
 
 // FIT / ZOOM
 document.getElementById('btn-fit').addEventListener('click', fitView);

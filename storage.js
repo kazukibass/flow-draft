@@ -6,6 +6,7 @@ function autosave() {
     localStorage.setItem('flowdraft_data', JSON.stringify({
       nodes:    state.nodes,
       conns:    state.conns,
+      groups:   state.groups,
       nextId:   state.nextId,
       name:     getDiagramName(),
       canvasBg: state.canvasBg  || '',
@@ -25,6 +26,7 @@ function loadSaved() {
     const data = JSON.parse(raw);
     state.nodes    = data.nodes    || {};
     state.conns    = data.conns    || {};
+    state.groups   = data.groups   || {};
     state.nextId   = data.nextId   || 1;
     state.theme    = data.theme    || 'light';
     // history は復元しない（ロード後の現在状態が履歴の起点になる）
