@@ -366,6 +366,11 @@ function nodeMouseDown(e, id) {
   if (e.button !== 0) return;
   if (e.target.classList.contains('port') || e.target.classList.contains('resize-handle')) return;
   e.stopPropagation();
+  if (state.mode === 'group') {
+    state.selected.has(id) ? state.selected.delete(id) : state.selected.add(id);
+    renderSelection(); updateMobileGroupToolbar();
+    return;
+  }
   if (state.mode === 'connect') return;
   if (!e.shiftKey && !state.selected.has(id)) state.selected.clear();
   state.selected.add(id);
@@ -401,6 +406,12 @@ function nodeMouseDown(e, id) {
 function nodeTouchStart(e, id) {
   if (e.target.classList.contains('port')) return;
   e.stopPropagation();
+  if (state.mode === 'group') {
+    e.preventDefault();
+    state.selected.has(id) ? state.selected.delete(id) : state.selected.add(id);
+    renderSelection(); updateMobileGroupToolbar();
+    return;
+  }
   if (state.mode === 'connect') return;
   const t0 = e.touches[0], startCPos = clientToCanvas(t0);
   if (!e.shiftKey && !state.selected.has(id)) state.selected.clear();
@@ -996,10 +1007,46 @@ function setMode(m) {
   document.getElementById('btn-select')?.classList.toggle('active', m === 'select');
   canvasWrap.classList.toggle('mode-connect', m === 'connect');
   const stMode = document.getElementById('st-mode');
-  if (stMode) stMode.textContent = m === 'connect' ? '接続' : '選択';
+  if (stMode) stMode.textContent = m === 'connect' ? '接続' : (m === 'group' ? '領域選択' : '選択');
   // モバイル接続ボタンのハイライト同期
   const mConn = document.getElementById('m-connect');
   if (mConn) mConn.classList.toggle('connect-active', m === 'connect');
+  const groupToolbar = document.getElementById('mobile-group-toolbar');
+  if (groupToolbar) groupToolbar.hidden = m !== 'group';
+}
+
+function updateMobileGroupToolbar() {
+  const count = [...state.selected].filter(id => state.nodes[id]).length;
+  const label = document.getElementById('mobile-group-count');
+  const create = document.getElementById('mobile-group-create');
+  if (label) label.textContent = `${count}個選択`;
+  if (create) create.disabled = count < 2;
+}
+
+function startMobileGroupSelection() {
+  closeModal('modal-settings');
+  state.selected.clear();
+  setMode('group');
+  renderSelection();
+  updateRightPanel();
+  updateMobileGroupToolbar();
+  notify('まとめるノードをタップしてください');
+}
+
+function cancelMobileGroupSelection() {
+  state.selected.clear();
+  setMode('select');
+  renderSelection();
+  updateRightPanel();
+}
+
+function finishMobileGroupSelection() {
+  if ([...state.selected].filter(id => state.nodes[id]).length < 2) return;
+  createGroupFromSelection();
+  state.selected.clear();
+  setMode('select');
+  renderSelection();
+  updateRightPanel();
 }
 
 // ──────────────────────────────────────────────
@@ -1630,6 +1677,9 @@ document.getElementById('settings-canvas-bg')?.addEventListener('click', () => {
   closeModal('modal-settings');
   document.getElementById('btn-canvas-bg').click();
 });
+document.getElementById('settings-group')?.addEventListener('click', startMobileGroupSelection);
+document.getElementById('mobile-group-cancel')?.addEventListener('click', cancelMobileGroupSelection);
+document.getElementById('mobile-group-create')?.addEventListener('click', finishMobileGroupSelection);
 document.getElementById('settings-share')?.addEventListener('click', () => {
   closeModal('modal-settings');
   document.getElementById('share-url-text').textContent = generateShareUrl();
