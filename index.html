@@ -201,6 +201,7 @@
       <button class="modal-btn" id="settings-share">🔗 共有URL</button>
       <button class="modal-btn" id="settings-theme">◐ ダーク / ライト切り替え</button>
       <button class="modal-btn" id="settings-canvas-bg">🎨 キャンバス背景色</button>
+      <button class="modal-btn" id="settings-group">◌ 処理領域を作る</button>
       <button class="modal-btn" id="settings-reset">⌖ 表示位置をリセット</button>
       <button class="modal-btn danger" id="settings-new">新しいフローを作成</button>
     </div>
@@ -229,6 +230,12 @@
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="14" y2="12"/></svg>
     </button>
   </div>
+</div>
+
+<div id="mobile-group-toolbar" hidden aria-live="polite">
+  <span id="mobile-group-count">0個選択</span>
+  <button class="mobile-group-action" id="mobile-group-cancel" type="button">キャンセル</button>
+  <button class="mobile-group-action primary" id="mobile-group-create" type="button" disabled>作成</button>
 </div>
 
 <div id="notif"></div>

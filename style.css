@@ -258,6 +258,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg);
 
 /* ── MOBILE FAB ── */
 #mobile-toolbar { display: none; }
+#mobile-group-toolbar { display:none; }
 
 .mobile-bottom-row {
   position: fixed;
@@ -366,6 +367,26 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg);
 
   #mobile-toolbar { display: block; }
   #mobile-toolbar button { pointer-events: auto; }
+  #mobile-group-toolbar:not([hidden]) {
+    position:fixed;
+    left:12px;
+    right:12px;
+    bottom:calc(var(--safe-bottom) + 56px);
+    z-index:340;
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:8px 10px;
+    border:1px solid var(--border2);
+    border-radius:14px;
+    background:color-mix(in srgb, var(--bg2) 96%, transparent);
+    box-shadow:0 4px 22px var(--shadow);
+    backdrop-filter:blur(12px);
+  }
+  #mobile-group-count { flex:1; font:500 11px var(--mono); color:var(--text2); }
+  .mobile-group-action { min-height:36px; padding:0 12px; border:1px solid var(--border2); border-radius:9px; background:transparent; color:var(--text); font:500 11px var(--font); }
+  .mobile-group-action.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .mobile-group-action:disabled { opacity:.4; }
 }
 
 /* ── MOBILE NODE MENU（左スライドイン） ── */
