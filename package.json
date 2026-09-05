@@ -1,0 +1,24 @@
+{
+  "name": "flow-draft",
+  "private": true,
+  "version": "1.0.0",
+  "description": "直感的でプロフェッショナルな操作性を備えた、ブラウザで動く軽量・高速なノードベースのフローチャート作成ツールです。開発者向けのスマートなショートカット、ミニマップ機能、無限キャンバス、レスポンシブなモバイルUIを搭載しています。",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kazukibass/flow-draft.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/kazukibass/flow-draft/issues"
+  },
+  "homepage": "https://github.com/kazukibass/flow-draft#readme",
+  "devDependencies": {
+    "jsdom": "26.1.0"
+  }
+}

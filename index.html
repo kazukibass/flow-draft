@@ -52,8 +52,9 @@
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 5.5C2.5 3.6 4 2 6 2h4c2 0 3.5 1.6 3.5 3.5v5c0 1.9-1.5 3.5-3.5 3.5H6c-2 0-3.5-1.6-3.5-3.5z" stroke-dasharray="2 1.5"/></svg>
     </button>
     <div class="tb-title"></div>
-    <input id="diagram-name-pc" class="pc-only-input" value="無題のフロー" spellcheck="false" aria-label="フロー名">
+    <input id="diagram-name-pc" class="pc-only-input" value="無題のフロー" maxlength="4096" spellcheck="false" aria-label="フロー名">
     <div class="tb-title"></div>
+    <button class="tb-btn view-mode-button" id="btn-view" aria-pressed="false">閲覧モード</button>
     <button class="tb-btn" id="btn-share" data-tip="共有URL">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="13" cy="3" r="1.5"/><circle cx="13" cy="13" r="1.5"/><circle cx="3" cy="8" r="1.5"/><line x1="4.5" y1="7.2" x2="11.5" y2="3.8"/><line x1="4.5" y1="8.8" x2="11.5" y2="12.2"/></svg>
     </button>
@@ -103,6 +104,13 @@
         <canvas id="minimap-canvas"></canvas>
         <div id="minimap-viewport"></div>
       </div>
+    </div>
+
+    <div id="view-strip" hidden>
+      <span>閲覧中</span>
+      <button id="view-panel-toggle" type="button">経路・詳細</button>
+      <button id="view-exit" type="button">編集に戻る</button>
+      <p id="view-status" role="status"></p>
     </div>
 
     <!-- RIGHT PANEL -->
@@ -195,7 +203,8 @@
   <div class="modal">
     <h3>メニュー</h3>
     <div style="display:flex;flex-direction:column;gap:8px;">
-      <input id="diagram-name-mobile" class="mobile-only-input" value="無題のフロー" spellcheck="false" aria-label="フロー名">
+      <input id="diagram-name-mobile" class="mobile-only-input" value="無題のフロー" maxlength="4096" spellcheck="false" aria-label="フロー名">
+      <button class="modal-btn" id="settings-view" aria-pressed="false">閲覧モード</button>
       <button class="modal-btn primary" id="settings-tpl">📋 テンプレート</button>
       <button class="modal-btn primary" id="settings-export">↓ エクスポート・読み込み</button>
       <button class="modal-btn" id="settings-share">🔗 共有URL</button>
@@ -240,9 +249,12 @@
 
 <div id="notif"></div>
 
+<script src="diagram-data.js"></script>
+<script src="graph-query.js"></script>
 <script src="theme.js"></script>
 <script src="storage.js"></script>
 <script src="export.js"></script>
 <script src="app.js"></script>
+<script src="view-mode.js"></script>
 
 </body></html>

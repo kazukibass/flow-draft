@@ -49,10 +49,7 @@ document.getElementById('exp-png').addEventListener('click', () => {
 
 document.getElementById('exp-json').addEventListener('click', () => {
   const name = getDiagramName();
-  const data = JSON.stringify(
-    { nodes: state.nodes, conns: state.conns, groups: state.groups, nextId: state.nextId, name },
-    null, 2
-  );
+  const data = JSON.stringify(getDocument(), null, 2);
   const blob = new Blob([data], { type: 'application/json' });
   const a    = document.createElement('a');
   a.href     = URL.createObjectURL(blob);
@@ -63,21 +60,42 @@ document.getElementById('exp-json').addEventListener('click', () => {
 });
 
 document.getElementById('import-file').addEventListener('change', e => {
-  const file = e.target.files[0];
+  const input = e.target;
+  const file = input.files[0];
   if (!file) return;
+  if (!canEdit()) {
+    input.value = '';
+    notify('閲覧中は読み込めません');
+    return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    input.value = '';
+    notify('ファイルが大きすぎます（上限5MB）');
+    return;
+  }
   const reader = new FileReader();
+  const modeRevision = viewState.revision;
   reader.onload = ev => {
+    if (!canEdit() || modeRevision !== viewState.revision) {
+      input.value = '';
+      notify('閲覧中のため読み込みを中止しました');
+      return;
+    }
     try {
       const data   = JSON.parse(ev.target.result);
-      state.nodes  = data.nodes  || {};
-      state.conns  = data.conns  || {};
-      state.groups = data.groups || {};
-      state.nextId = data.nextId || 1;
-      if (data.name) setDiagramName(data.name);
+      applyDocument(data);
       snapshot(); renderAll(); fitView();
       closeModal('modal-export');
       notify('読み込みました');
-    } catch(ex) { notify('読み込みに失敗しました'); }
+    } catch(ex) {
+      notify('有効なFlowDraftファイルではありません');
+    } finally {
+      input.value = '';
+    }
+  };
+  reader.onerror = () => {
+    input.value = '';
+    notify('ファイルを読み込めませんでした');
   };
   reader.readAsText(file);
 });
@@ -135,29 +153,35 @@ function buildExportSVG(bounds, pad) {
       const d = organicPath(boxes).replace(/([MQ]) ([0-9.-]+) ([0-9.-]+)/g,
         (_, command, x, y) => `${command} ${+x + ox} ${+y + oy}`);
       if (!d) return;
-      regions += `<path d="${d}" fill="${group.color}18" stroke="${group.color}" stroke-opacity="0.55" stroke-width="1.5" stroke-dasharray="7 5"/>`;
+      regions += `<path d="${d}" fill="${group.color || '#5b9cf6'}" fill-opacity="0.094" stroke="${group.color || '#5b9cf6'}" stroke-opacity="0.55" stroke-width="1.5" stroke-dasharray="7 5"/>`;
       const top = boxes.reduce((best, box) => box.y < best.y ? box : best, boxes[0]);
       const label = islandIndex ? `${group.label} · ${islandIndex + 1}` : group.label;
-      regions += `<text x="${top.x + ox + 10}" y="${top.y + oy - 8}" font-size="11" fill="${group.color}" font-family="monospace">${escHtml(label)}</text>`;
+      regions += `<text x="${top.x + ox + 10}" y="${top.y + oy - 8}" font-size="11" fill="${group.color || '#5b9cf6'}" font-family="monospace">${escHtml(label)}</text>`;
     });
   });
 
   let paths = '';
+  const exportDocument = getDocument();
   Object.values(state.conns).forEach(c => {
     const from = getPortPos(c.from, c.fromPort);
     const to   = getPortPos(c.to,   c.toPort);
     const p    = bezierPath(from, to, c.fromPort, c.toPort, c);
+    const semantic = FlowDraftData.getSemantic(exportDocument, c.id);
+    const semanticVisual = FlowDraftData.semanticStyle(semantic);
+    const stroke = semanticVisual.color || '#555';
+    const dash = semanticVisual.dash ? ` stroke-dasharray="${escHtml(String(semanticVisual.dash))}"` : '';
     paths += `<path d="${p
       .replace(/M ([0-9.-]+) ([0-9.-]+)/g, (_, x, y) => `M ${+x + ox} ${+y + oy}`)
       .replace(/C ([0-9.-]+) ([0-9.-]+) ([0-9.-]+) ([0-9.-]+) ([0-9.-]+) ([0-9.-]+)/g,
         (_, x1, y1, x2, y2, x3, y3) =>
           `C ${+x1+ox} ${+y1+oy} ${+x2+ox} ${+y2+oy} ${+x3+ox} ${+y3+oy}`)
-    }" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#arr)"/>`;
-    if (c.label) {
+    }" fill="none" stroke="${stroke}" stroke-width="1.5"${dash} marker-end="url(#arr)"/>`;
+    const connectionLabel = c.label || (semantic.kind !== 'unspecified' || semantic.outcome !== 'unspecified' ? semanticVisual.label : '');
+    if (connectionLabel) {
       const mid = bezierMidpoint(from, to, c.fromPort, c.toPort, c);
       const mx = mid.x + ox;
       const my = mid.y + oy;
-      paths += `<text x="${mx}" y="${my - 4}" text-anchor="middle" font-size="10" fill="#888" font-family="monospace">${escHtml(c.label)}</text>`;
+      paths += `<text x="${mx}" y="${my - 4}" text-anchor="middle" font-size="10" fill="${stroke}" font-family="monospace">${escHtml(connectionLabel)}</text>`;
     }
   });
 
@@ -174,7 +198,7 @@ function buildExportSVG(bounds, pad) {
   const canvasBg = state.canvasBg || (typeof THEMES !== 'undefined' ? THEMES[state.theme]?.bg : null) || '#f5f6f8';
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W * 2}" height="${H * 2}" viewBox="0 0 ${W} ${H}">
-  <defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#666" stroke-width="1.5"/></marker></defs>
+  <defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5"/></marker></defs>
   <rect width="${W}" height="${H}" fill="${canvasBg}"/>
   ${regions}
   ${paths}

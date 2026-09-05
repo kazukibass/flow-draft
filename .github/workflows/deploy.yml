@@ -1,31 +1,68 @@
-name: Deploy to GitHub Pages
+name: Validate and Deploy to GitHub Pages
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
+    branches: [ main ]
+  push:
     branches: [ main ]
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 jobs:
-  build-and-deploy:
+  validate:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install test dependencies
+        run: npm ci
+
+      - name: Syntax check production JavaScript
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in theme.js storage.js export.js app.js diagram-data.js graph-query.js view-mode.js; do
+            node --check "$file"
+          done
+
+      - name: Run core and DOM integration tests
+        run: node --test tests/*.test.js
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Prepare Pages artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          for file in index.html style.css theme.js storage.js export.js app.js diagram-data.js graph-query.js view-mode.js; do
+            cp "$file" _site/
+          done
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: _site
 
       - name: Deploy to GitHub Pages
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
