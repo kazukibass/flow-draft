@@ -78,11 +78,10 @@ test('viewer controls are read-only and view transitions preserve canonical docu
   assert.equal(dom.window.document.body.classList.contains('view-mode'), true);
   assert.equal(dom.window.document.getElementById('btn-new').disabled, true);
   assert.equal(dom.window.document.getElementById('diagram-name-pc').readOnly, true);
-  const source = dom.window.document.getElementById('view-source');
-  source.value = Object.keys(evaluate(context, 'state.nodes'))[0];
-  source.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-  dom.window.document.getElementById('view-query').value = 'downstream';
-  dom.window.document.getElementById('view-query').dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  assert.equal(dom.window.document.querySelector('.view-panel'), null);
+  assert.equal(dom.window.document.querySelector('#view-source, #view-query, #view-target, #view-kind'), null);
+  dom.window.document.querySelector('.flow-node').click();
+  assert.match(dom.window.document.getElementById('view-status').textContent, /つながる線/);
   assert.equal(stateSnapshot(context), before);
   dom.window.document.getElementById('view-exit').click();
   assert.equal(dom.window.document.body.classList.contains('view-mode'), false);
@@ -185,24 +184,121 @@ test('file reads are cancelled after entering and leaving viewer before completi
   assert.match(doc.getElementById('notif').textContent,/中止/);
 });
 
-test('mobile menu enters viewer and selects a directed route without changing data', async t => {
+test('mobile menu enters the simple viewer and highlights direct connections without changing data', async t => {
   const runtime = await boot(); checkRuntime(t,runtime);
   const {dom,context} = runtime, w = dom.window, doc = w.document;
   Object.defineProperty(w,'innerWidth',{configurable:true,value:390});
   w.dispatchEvent(new w.Event('resize'));
   assert.equal(doc.body.classList.contains('mobile'),true);
   const before = stateSnapshot(context);
-  const ids = evaluate(context,'Object.keys(state.nodes)');
   doc.getElementById('m-settings').click();
   doc.getElementById('settings-view').click();
-  const select = (id,value) => { const el=doc.getElementById(id); el.value=value; el.dispatchEvent(new w.Event('change',{bubbles:true})); };
-  select('view-source',ids[0]);
-  select('view-query','route');
-  select('view-target',ids[2]);
-  assert.match(doc.getElementById('view-status').textContent,/最短経路：2接続/);
-  assert.equal(doc.querySelectorAll('[data-conn-id].view-lit').length,2);
+  doc.querySelector('.flow-node').click();
+  assert.match(doc.getElementById('view-status').textContent,/つながる線/);
+  assert.ok(doc.querySelectorAll('[data-conn-id].view-lit').length >= 1);
+  assert.equal(doc.querySelector('#view-source, #view-query, #view-target, #view-kind'),null);
+  doc.getElementById('view-panel-toggle').click();
+  assert.ok(doc.querySelector('.view-panel'));
+  assert.equal(doc.querySelector('.view-panel input, .view-panel textarea, .view-panel select'),null);
   assert.equal(stateSnapshot(context),before);
   doc.getElementById('view-exit').click();
   evaluate(context,"addNode('process',10,10,'new')");
   assert.equal(doc.querySelectorAll('.flow-node').length,4);
+});
+
+test('mobile navigation exposes process-region creation directly', async t => {
+  const runtime = await boot(); checkRuntime(t,runtime);
+  const {dom,context} = runtime, w = dom.window, doc = w.document;
+  Object.defineProperty(w,'innerWidth',{configurable:true,value:390});
+  w.dispatchEvent(new w.Event('resize'));
+  assert.equal(doc.getElementById('settings-group'),null);
+  doc.getElementById('m-group').click();
+  assert.equal(evaluate(context,'state.mode'),'group');
+  assert.equal(doc.getElementById('mobile-group-toolbar').hidden,false);
+});
+
+test('mobile node drag waits for intent and does not open the editor before movement', async t => {
+  const runtime = await boot(); checkRuntime(t,runtime);
+  const {dom,context} = runtime, w = dom.window, doc = w.document;
+  Object.defineProperty(w,'innerWidth',{configurable:true,value:390});
+  w.dispatchEvent(new w.Event('resize'));
+  const node = doc.querySelector('.flow-node');
+  const id = node.id.slice(5);
+  const before = evaluate(context, `({x:state.nodes['${id}'].x,y:state.nodes['${id}'].y})`);
+  const touch = (type,x,y) => {
+    const event = new w.Event(type,{bubbles:true,cancelable:true});
+    Object.defineProperty(event,'touches',{value:type === 'touchend' ? [] : [{clientX:x,clientY:y}]});
+    node.dispatchEvent(event);
+  };
+
+  touch('touchstart',100,100);
+  assert.equal(doc.getElementById('right-panel').innerHTML,'');
+  touch('touchmove',106,106);
+  assert.deepEqual(evaluate(context, `({x:state.nodes['${id}'].x,y:state.nodes['${id}'].y})`),before);
+  touch('touchmove',130,130);
+  touch('touchend',130,130);
+  assert.equal(doc.getElementById('right-panel').innerHTML,'');
+  assert.notDeepEqual(evaluate(context, `({x:state.nodes['${id}'].x,y:state.nodes['${id}'].y})`),before);
+
+  touch('touchstart',130,130);
+  touch('touchend',130,130);
+  assert.ok(doc.getElementById('prop-label'));
+});
+
+test('shift selection keeps node text inert and lists its existing process regions', async t => {
+  const runtime = await boot(); checkRuntime(t,runtime);
+  const {dom,context} = runtime, w = dom.window, doc = w.document;
+  const ids = evaluate(context,'Object.keys(state.nodes)');
+  evaluate(context, `state.groups.g1={id:'g1',label:'既存領域',color:'#5b9cf6',nodeIds:['${ids[0]}','${ids[1]}'],padding:28,splitDistance:150}`);
+  evaluate(context, `state.selected.add('${ids[0]}'); renderSelection(); updateRightPanel()`);
+  assert.equal(doc.querySelector('.group-control-label').textContent,'既存領域');
+
+  const second = doc.getElementById(`node-${ids[1]}`);
+  const down = new w.MouseEvent('mousedown',{bubbles:true,cancelable:true,button:0,shiftKey:true,clientX:100,clientY:100});
+  second.dispatchEvent(down);
+  doc.dispatchEvent(new w.MouseEvent('mouseup',{bubbles:true}));
+  assert.equal(down.defaultPrevented,true);
+  assert.equal(evaluate(context,'state.selected.size'),2);
+  assert.equal(second.classList.contains('selected'),true);
+});
+
+test('process region editor opens from a node or region label and labels avoid each other', async t => {
+  const runtime = await boot(); checkRuntime(t,runtime);
+  const {dom,context} = runtime, w = dom.window, doc = w.document;
+  const ids = evaluate(context,'Object.keys(state.nodes)');
+  evaluate(context, `
+    state.groups.g1={id:'g1',label:'領域A',color:'#5b9cf6',nodeIds:['${ids[0]}','${ids[1]}'],padding:28,splitDistance:150};
+    state.groups.g2={id:'g2',label:'領域B',color:'#a78bfa',nodeIds:['${ids[0]}','${ids[1]}'],padding:28,splitDistance:150};
+    state.selected.add('${ids[0]}'); renderSelection(); updateRightPanel();
+  `);
+  const regionButtons = [...doc.querySelectorAll('.group-control-label')];
+  assert.equal(regionButtons.length,2);
+  regionButtons[0].click();
+  assert.equal(doc.getElementById('group-name').value,'領域A');
+  doc.getElementById('right-panel').innerHTML='';
+  evaluate(context,'renderConns()');
+  const labels = [...doc.querySelectorAll('.process-region-label')];
+  assert.equal(labels.length,2);
+  assert.equal(new Set(labels.map(label=>label.getAttribute('transform'))).size,2);
+  const placement = JSON.parse(evaluate(context, `JSON.stringify((()=>{
+    const boxes=groupIslands(state.groups.g1)[0];
+    const p=groupLabelPosition(boxes,'領域A',Object.keys(state.nodes).map(id=>nodeBox(id)),[]);
+    return {p,minX:Math.min(...boxes.map(b=>b.x)),minY:Math.min(...boxes.map(b=>b.y)),maxX:Math.max(...boxes.map(b=>b.x+b.w)),maxY:Math.max(...boxes.map(b=>b.y+b.h))};
+  })())`));
+  assert.ok(placement.p.rect.x>=placement.minX);
+  assert.ok(placement.p.rect.x+placement.p.rect.w<=placement.maxX);
+  assert.ok(placement.p.rect.y>=placement.minY);
+  assert.ok(placement.p.rect.y+placement.p.rect.h<=placement.maxY);
+  const sizedLabel = JSON.parse(evaluate(context, `JSON.stringify((()=>{
+    const boxes=groupIslands(state.groups.g1)[0];
+    return groupLabelPosition(boxes,'既存の処理領域',Object.keys(state.nodes).map(id=>nodeBox(id)),[]);
+  })())`));
+  assert.ok(sizedLabel.width>=90);
+  assert.equal(sizedLabel.label,'既存の処理領域');
+  labels.find(label=>label.textContent.includes('領域B')).dispatchEvent(new w.MouseEvent('click',{bubbles:true}));
+  assert.equal(doc.getElementById('group-name').value,'領域B');
+  const input = doc.getElementById('group-name');
+  input.value='更新した領域';
+  input.dispatchEvent(new w.Event('change',{bubbles:true}));
+  assert.equal(evaluate(context,'state.groups.g2.label'),'更新した領域');
 });

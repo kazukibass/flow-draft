@@ -1,9 +1,9 @@
 // Ephemeral reader state: never included in the authored document or history.
-const viewState = { active: false, revision: 0, source: '', target: '', conn: '', mode: 'focus', kind: 'all', panelOpen: true };
+const viewState = { active: false, revision: 0, source: '', conn: '', panelOpen: false };
 function canEdit() { return !viewState.active; }
 
 const editControlIds = ['btn-new', 'btn-tpl', 'btn-undo', 'btn-redo', 'btn-conn', 'btn-select', 'btn-group',
-  'btn-theme', 'btn-canvas-bg', 'm-add', 'm-connect', 'm-undo', 'settings-new', 'settings-tpl',
+  'btn-theme', 'btn-canvas-bg', 'm-add', 'm-connect', 'm-undo', 'm-group', 'settings-new', 'settings-tpl',
   'settings-group', 'settings-theme', 'settings-canvas-bg', 'confirm-new', 'import-file'];
 
 function setViewMode(active) {
@@ -22,9 +22,10 @@ function setViewMode(active) {
     document.querySelectorAll('.modal-overlay.open, #mobile-node-menu.open').forEach(el => closeModal(el.id));
     document.getElementById('ctx-menu').classList.remove('open');
   }
-  Object.assign(viewState, { active, source: '', target: '', conn: '', mode: 'focus', kind: 'all', panelOpen: true });
+  Object.assign(viewState, { active, source: '', conn: '', panelOpen: false });
   document.body.classList.toggle('view-mode', active);
   document.getElementById('view-strip').hidden = !active;
+  document.getElementById('view-panel-toggle').setAttribute('aria-expanded', 'false');
   for (const id of editControlIds) {
     const el = document.getElementById(id);
     if (el) el.disabled = active;
@@ -42,13 +43,12 @@ function setViewMode(active) {
 }
 
 function clearViewFocus() {
-  Object.assign(viewState, { source: '', target: '', conn: '' });
+  Object.assign(viewState, { source: '', conn: '' });
   updateView();
 }
 function focusViewNode(id) {
   if (!state.nodes[id]) return;
-  if (viewState.mode === 'route' && viewState.source && viewState.source !== id) viewState.target = id;
-  else { viewState.source = id; viewState.target = ''; }
+  viewState.source = id;
   viewState.conn = '';
   updateView();
 }
@@ -56,8 +56,6 @@ function focusViewConnection(id) {
   if (!state.conns[id]) return;
   viewState.conn = id;
   viewState.source = state.conns[id].from;
-  viewState.target = state.conns[id].to;
-  viewState.mode = 'focus';
   updateView();
 }
 function viewResult() {
@@ -65,19 +63,9 @@ function viewResult() {
     const c = state.conns[viewState.conn];
     return { nodeIds: [c.from, c.to], connIds: [c.id], message: FlowDraftData.semanticStyle(FlowDraftData.getSemantic(state, c.id)).label };
   }
-  if (!viewState.source) return { nodeIds: [], connIds: [], message: 'ノードを選ぶと関連部分を表示します。' };
-  if (viewState.mode === 'route') {
-    if (!viewState.target) return { nodeIds: [viewState.source], connIds: [], message: '終点を選んでください。' };
-    const r = FlowDraftGraph.route(state, viewState.source, viewState.target, viewState.kind);
-    return { ...r, message: !r.found ? 'この条件で到達する経路はありません。' : r.multiple ? `同じ長さの最短経路が複数あります。うち1本（${r.connIds.length}接続）を表示。` : `最短経路：${r.connIds.length}接続` };
-  }
-  if (viewState.mode === 'upstream' || viewState.mode === 'downstream') {
-    const r = FlowDraftGraph.reach(state, viewState.source, viewState.mode, viewState.kind);
-    return { ...r, message: `${viewState.mode === 'upstream' ? '上流' : '下流'}：${r.nodeIds.length}ノード・${r.connIds.length}接続` };
-  }
-  const edges = Object.values(state.conns).filter(c => (c.from === viewState.source || c.to === viewState.source) &&
-    (viewState.kind === 'all' || FlowDraftData.getSemantic(state, c.id).kind === viewState.kind));
-  return { nodeIds: [...new Set([viewState.source, ...edges.flatMap(c => [c.from, c.to])])], connIds: edges.map(c => c.id), message: `直接の接続：${edges.length}本` };
+  if (!viewState.source) return { nodeIds: [], connIds: [], message: 'ノードか線を触ってください。' };
+  const edges = Object.values(state.conns).filter(c => c.from === viewState.source || c.to === viewState.source);
+  return { nodeIds: [...new Set([viewState.source, ...edges.flatMap(c => [c.from, c.to])])], connIds: edges.map(c => c.id), message: `このノードにつながる線：${edges.length}本` };
 }
 function applyViewHighlights() {
   const result = viewState.active ? viewResult() : { nodeIds: [], connIds: [] };
@@ -104,40 +92,34 @@ function updateView() { applyViewHighlights(); renderViewPanel(); }
 function options(map, value) {
   return Object.entries(map).map(([id, label]) => `<option value="${escHtml(id)}"${id === value ? ' selected' : ''}>${escHtml(label)}</option>`).join('');
 }
+
 function renderViewPanel() {
   if (!viewState.active) return;
   if (!viewState.panelOpen) { rightPanel.innerHTML = ''; return; }
-  const nodeLabels = Object.fromEntries(Object.values(state.nodes).map(n => [n.id, `${n.label || '無題'} (${n.id})`]));
   const n = state.nodes[viewState.source];
   const c = state.conns[viewState.conn];
   const detail = c ? FlowDraftData.getSemantic(state, c.id).description : n?.sublabel;
+  const edges = n ? Object.values(state.conns).filter(edge => edge.from === n.id || edge.to === n.id) : [];
   rightPanel.innerHTML = `<div class="prop-section view-panel">
-    ${panelHeader('図上の経路')}
-    <p class="prop-help">図に書かれた接続をたどります。実行ログの表示ではありません。</p>
-    <label class="prop-row">始点<select class="prop-select" id="view-source">${options({ '': 'ノードを選択', ...nodeLabels }, viewState.source)}</select></label>
-    <label class="prop-row">表示<select class="prop-select" id="view-query">${options({focus:'直接の接続',upstream:'上流',downstream:'下流',route:'2点間の最短経路'},viewState.mode)}</select></label>
-    ${viewState.mode === 'route' ? `<label class="prop-row">終点<select class="prop-select" id="view-target">${options({'':'ノードを選択',...nodeLabels},viewState.target)}</select></label>` : ''}
-    <label class="prop-row">接続の種類<select class="prop-select" id="view-kind">${options({all:'すべて',...FlowDraftData.KINDS},viewState.kind)}</select></label>
-    <p class="view-result" role="status">${escHtml(viewResult().message)}</p>
-    ${n ? `<h3>${escHtml(c ? (c.label || '接続') : n.label)}</h3><p class="view-detail">${escHtml(detail || '説明は未設定です。')}</p>` : ''}
-    <button class="secondary-btn" id="view-clear">ハイライトを解除</button>
+    ${panelHeader('詳細')}
+    ${n ? `<p class="view-result" role="status">${escHtml(viewResult().message)}</p>
+      <h3>${escHtml(c ? (c.label || `${state.nodes[c.from]?.label} → ${state.nodes[c.to]?.label}`) : n.label)}</h3>
+      <p class="view-detail">${escHtml(detail || '説明は未設定です。')}</p>
+      ${!c && edges.length ? `<div class="view-connection-list">${edges.map(edge => {
+        const semantic = FlowDraftData.semanticStyle(FlowDraftData.getSemantic(state, edge.id));
+        return `<div class="view-connection-item"><strong>${escHtml(state.nodes[edge.from]?.label)} → ${escHtml(state.nodes[edge.to]?.label)}</strong>${escHtml(edge.label || semantic.label)}</div>`;
+      }).join('')}</div>` : ''}` : '<p class="view-empty">ノードか線を触ると、ここに詳細を表示します。</p>'}
     <details class="semantic-legend"><summary>線の凡例</summary>${Object.entries(FlowDraftData.KINDS).map(([kind,label])=>{
       const s = FlowDraftData.semanticStyle({kind});
       return `<div><svg width="32" height="14" aria-hidden="true"><path d="M0 7H30" stroke="${s.color || 'currentColor'}" stroke-width="2" stroke-dasharray="${s.dash}"/></svg>${label}</div>`;
-    }).join('')}<p>エラー・フォールバックは結果として別に設定できます。</p></details>
-    <details><summary>接続一覧</summary><div class="view-connections">${Object.values(state.conns).map(edge => `<button class="secondary-btn" data-view-conn="${escHtml(edge.id)}">${escHtml(state.nodes[edge.from]?.label)} → ${escHtml(state.nodes[edge.to]?.label)} · ${escHtml(FlowDraftData.semanticStyle(FlowDraftData.getSemantic(state,edge.id)).label)} (${escHtml(edge.id)})</button>`).join('')}</div></details>
+    }).join('')}<p>線の種類や説明は編集モードで設定します。</p></details>
   </div>`;
-  document.getElementById('prop-close').addEventListener('click', () => { viewState.panelOpen = false; renderViewPanel(); document.getElementById('view-panel-toggle').focus(); });
-  for (const [id, key] of [['view-source','source'],['view-target','target'],['view-query','mode'],['view-kind','kind']]) {
-    document.getElementById(id)?.addEventListener('change', e => {
-      viewState[key] = e.target.value;
-      viewState.conn = '';
-      updateView();
-      document.getElementById(id)?.focus();
-    });
-  }
-  document.getElementById('view-clear').addEventListener('click', clearViewFocus);
-  rightPanel.querySelectorAll('[data-view-conn]').forEach(button => button.addEventListener('click', () => focusViewConnection(button.dataset.viewConn)));
+  document.getElementById('prop-close').addEventListener('click', () => {
+    viewState.panelOpen = false;
+    document.getElementById('view-panel-toggle').setAttribute('aria-expanded', 'false');
+    renderViewPanel();
+    document.getElementById('view-panel-toggle').focus();
+  });
 }
 
 function appendSemanticEditor(id) {
@@ -162,7 +144,11 @@ function appendSemanticEditor(id) {
 document.getElementById('btn-view').addEventListener('click', () => setViewMode(canEdit()));
 document.getElementById('settings-view').addEventListener('click', () => { closeModal('modal-settings'); setViewMode(canEdit()); });
 document.getElementById('view-exit').addEventListener('click', () => setViewMode(false));
-document.getElementById('view-panel-toggle').addEventListener('click', () => { viewState.panelOpen = !viewState.panelOpen; renderViewPanel(); });
+document.getElementById('view-panel-toggle').addEventListener('click', () => {
+  viewState.panelOpen = !viewState.panelOpen;
+  document.getElementById('view-panel-toggle').setAttribute('aria-expanded', String(viewState.panelOpen));
+  renderViewPanel();
+});
 
 // Capture stale controls opened before a mode transition; functional guards also
 // protect asynchronous completions. This is UI read-only, not access control.
