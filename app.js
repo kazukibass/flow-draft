@@ -5,6 +5,8 @@ const state = {
   nodes: {},
   conns: {},
   groups: {},
+  schemaVersion: 1,
+  semantics: { connections: {} },
   zoom: 1,
   panX: 0,
   panY: 0,
@@ -122,13 +124,11 @@ document.getElementById('diagram-name-mobile')?.addEventListener('input', e => {
 // HISTORY
 // ──────────────────────────────────────────────
 function snapshot() {
-  const s = JSON.stringify({
-    nodes:  JSON.parse(JSON.stringify(state.nodes)),
-    conns:  JSON.parse(JSON.stringify(state.conns)),
-    groups: JSON.parse(JSON.stringify(state.groups)),
-    nextId: state.nextId,
-    name:   getDiagramName(),
+  if (!canEdit()) return;
+  Object.keys(state.semantics.connections).forEach(id => {
+    if (!state.conns[id]) delete state.semantics.connections[id];
   });
+  const s = JSON.stringify(getDocument());
   state.history = state.history.slice(0, state.historyIdx + 1);
   state.history.push(s);
   if (state.history.length > 80) state.history.shift();
@@ -137,29 +137,44 @@ function snapshot() {
   autosave();
 }
 function undo() {
+  if (!canEdit()) return;
   if (state.historyIdx <= 0) return;
   state.historyIdx--;
   restore(JSON.parse(state.history[state.historyIdx]));
 }
 function redo() {
+  if (!canEdit()) return;
   if (state.historyIdx >= state.history.length - 1) return;
   state.historyIdx++;
   restore(JSON.parse(state.history[state.historyIdx]));
 }
 function restore(data) {
-  state.nodes  = data.nodes;
-  state.conns  = data.conns;
-  state.groups = data.groups || {};
-  state.nextId = data.nextId;
-  if (data.name !== undefined) setDiagramName(data.name);
-  state.selected.clear();
+  if (!canEdit()) return;
+  const saveBlocked = state.saveBlocked;
+  applyDocument(data);
+  state.saveBlocked = saveBlocked;
   renderAll();
+  autosave();
+}
+
+function getDocument() {
+  return FlowDraftData.serializeDocument({ ...state, name: getDiagramName() });
+}
+
+function applyDocument(raw) {
+  if (!canEdit()) return;
+  const doc = FlowDraftData.normalizeDocument(raw);
+  for (const key of ['nodes', 'conns', 'groups', 'nextId', 'schemaVersion', 'semantics']) state[key] = doc[key];
+  setDiagramName(doc.name);
+  state.saveBlocked = false;
+  state.selected.clear();
 }
 
 // ──────────────────────────────────────────────
 // PANEL EXCLUSIVITY (left <-> right)
 // ──────────────────────────────────────────────
 function openLeftPanel() {
+  if (!canEdit()) return;
   openModal('mobile-node-menu');
   if (isMobile()) {
     rightPanel.innerHTML = '';
@@ -270,6 +285,7 @@ function paletteTouchEnd(e) {
 // NODES
 // ──────────────────────────────────────────────
 function addNode(type, x, y, label, sublabel, color, bgColor) {
+  if (!canEdit()) return;
   const id  = uid();
   const def = NODE_TYPES.find(t => t.type === type) || NODE_TYPES[2];
   state.nodes[id] = {
@@ -323,10 +339,11 @@ function renderNode(id) {
 }
 
 function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 function removeNode(id) {
+  if (!canEdit()) return;
   const el = document.getElementById('node-' + id);
   if (el) el.remove();
   delete state.nodes[id];
@@ -349,6 +366,7 @@ function renderAll() {
   svgLayer.innerHTML = '';
   Object.keys(state.nodes).forEach(id => renderNode(id));
   renderConns(); updateStatus(); updateRightPanel(); drawMinimap();
+  applyViewHighlights();
 }
 
 // ──────────────────────────────────────────────
@@ -356,6 +374,7 @@ function renderAll() {
 // ──────────────────────────────────────────────
 let dragState = null;
 function attachNodeEvents(el, id) {
+  el.addEventListener('click', () => { if (!canEdit()) focusViewNode(id); });
   el.addEventListener('mousedown',   e => nodeMouseDown(e, id));
   el.addEventListener('touchstart',  e => nodeTouchStart(e, id), { passive: false });
   el.addEventListener('dblclick',    e => { e.stopPropagation(); startEditLabel(id); });
@@ -363,9 +382,10 @@ function attachNodeEvents(el, id) {
 }
 
 function nodeMouseDown(e, id) {
+  if (!canEdit()) return;
   if (e.button !== 0) return;
   if (e.target.classList.contains('port') || e.target.classList.contains('resize-handle')) return;
-  e.stopPropagation();
+  e.stopPropagation(); e.preventDefault();
   if (state.mode === 'group') {
     state.selected.has(id) ? state.selected.delete(id) : state.selected.add(id);
     renderSelection(); updateMobileGroupToolbar();
@@ -383,6 +403,7 @@ function nodeMouseDown(e, id) {
   });
   dragState = { offsets, moved: false };
   const onMove = e2 => {
+    if (!canEdit()) return;
     const cp = clientToCanvas(e2), w = canvasToWorld(cp.x, cp.y);
     state.selected.forEach(sid => {
       const n = state.nodes[sid];
@@ -404,6 +425,7 @@ function nodeMouseDown(e, id) {
 }
 
 function nodeTouchStart(e, id) {
+  if (!canEdit()) return;
   if (e.target.classList.contains('port')) return;
   e.stopPropagation();
   if (state.mode === 'group') {
@@ -416,17 +438,25 @@ function nodeTouchStart(e, id) {
   const t0 = e.touches[0], startCPos = clientToCanvas(t0);
   if (!e.shiftKey && !state.selected.has(id)) state.selected.clear();
   state.selected.add(id);
-  renderSelection(); openRightPanel(); updateRightPanel();
+  renderSelection();
   const offsets = {};
   state.selected.forEach(sid => {
     const n = state.nodes[sid], w = canvasToWorld(startCPos.x, startCPos.y);
     offsets[sid] = { dx: n.x - w.x, dy: n.y - w.y };
   });
-  let moved  = false;
+  let dragging = false;
+  const dragThreshold = 10;
   const nodeEl = document.getElementById('node-' + id);
   const onMove = e2 => {
+    if (!canEdit()) return;
     e2.preventDefault();
-    const cp = clientToCanvas(e2.touches[0]), w = canvasToWorld(cp.x, cp.y);
+    const cp = clientToCanvas(e2.touches[0]);
+    if (!dragging && Math.hypot(cp.x - startCPos.x, cp.y - startCPos.y) < dragThreshold) return;
+    if (!dragging) {
+      dragging = true;
+      if (isMobile()) rightPanel.innerHTML = '';
+    }
+    const w = canvasToWorld(cp.x, cp.y);
     state.selected.forEach(sid => {
       const n = state.nodes[sid];
       n.x = Math.round((w.x + offsets[sid].dx) / 8) * 8;
@@ -434,21 +464,29 @@ function nodeTouchStart(e, id) {
       const el = document.getElementById('node-' + sid);
       if (el) { el.style.left = n.x + 'px'; el.style.top = n.y + 'px'; }
     });
-    renderConns(); moved = true; drawMinimap();
+    renderConns(); drawMinimap();
   };
   const onEnd = () => {
     nodeEl.removeEventListener('touchmove', onMove);
     nodeEl.removeEventListener('touchend',  onEnd);
-    if (moved) snapshot();
+    nodeEl.removeEventListener('touchcancel', onEnd);
+    if (dragging) {
+      snapshot();
+    } else {
+      openRightPanel();
+      updateRightPanel();
+    }
   };
   nodeEl.addEventListener('touchmove', onMove, { passive: false });
   nodeEl.addEventListener('touchend',  onEnd);
+  nodeEl.addEventListener('touchcancel', onEnd);
 }
 
 // ──────────────────────────────────────────────
 // RESIZE
 // ──────────────────────────────────────────────
 function resizeMouseDown(e) {
+  if (!canEdit()) return;
   e.stopPropagation(); e.preventDefault();
   const id = e.target.dataset.node;
   const n  = state.nodes[id];
@@ -456,6 +494,7 @@ function resizeMouseDown(e) {
   const minW = 100, maxW = 280;
   const startX = e.clientX, startW = n.w;
   const onMove = e2 => {
+    if (!canEdit()) return;
     n.w = Math.min(maxW, Math.max(minW, startW + (e2.clientX - startX) / state.zoom));
     const el = document.getElementById('node-' + id);
     if (el) el.style.width = n.w + 'px';
@@ -500,6 +539,7 @@ function getPortPos(nodeId, port) {
 }
 
 function addConn(fromId, fromPort, toId, toPort, label) {
+  if (!canEdit()) return;
   if (fromId === toId) return;
   const id = cid();
   state.conns[id] = { id, from: fromId, fromPort: fromPort || 'bottom', to: toId, toPort: toPort || 'top', label: label || '' };
@@ -512,18 +552,20 @@ function renderConns() {
   renderGroups();
   Object.keys(state.conns).forEach(id => renderConn(id));
   if (state.tempConn) drawTempConn(state.tempConn);
+  applyViewHighlights();
 }
 
 const GROUP_COLORS = ['#5b9cf6','#a78bfa','#2dd4bf','#4ade80','#fbbf24','#f97316','#f87171'];
 
 function createGroupFromSelection() {
+  if (!canEdit()) return;
   const nodeIds = [...state.selected].filter(id => state.nodes[id]);
   if (nodeIds.length < 2) return notify('2個以上のノードを選択してください');
   const label = prompt('処理領域の名前:', '処理グループ');
   if (label === null) return;
   const id = gid();
   state.groups[id] = {
-    id, label: label.trim() || '処理グループ', nodeIds,
+    id, label: label.trim().slice(0, 4096) || '処理グループ', nodeIds,
     color: GROUP_COLORS[Object.keys(state.groups).length % GROUP_COLORS.length],
     padding: 28, splitDistance: 150
   };
@@ -583,24 +625,105 @@ function organicPath(boxes) {
   return d+' Z';
 }
 function renderGroups() {
+  const occupiedLabels = [];
+  const nodeRects = Object.keys(state.nodes).map(id => nodeBox(id)).filter(Boolean);
+  const connectionLabelRects = Object.values(state.conns).map(connection => {
+    const semantic = FlowDraftData.getSemantic(state, connection.id);
+    const appearance = FlowDraftData.semanticStyle(semantic);
+    const label = connection.label || (semantic.kind !== 'unspecified' || semantic.outcome !== 'unspecified' ? appearance.label : '');
+    if (!label) return null;
+    const from = getPortPos(connection.from, connection.fromPort);
+    const to = getPortPos(connection.to, connection.toPort);
+    const mid = bezierMidpoint(from, to, connection.fromPort, connection.toPort, connection);
+    return {x:mid.x-80,y:mid.y-12,w:160,h:24};
+  }).filter(Boolean);
   Object.values(state.groups).forEach(group=>{
-    group.nodeIds=group.nodeIds.filter(id=>state.nodes[id]);
+    const groupColor = group.color || '#5b9cf6';
     groupIslands(group).forEach((boxes,islandIndex)=>{
       const pathData=organicPath(boxes); if(!pathData)return;
       const g=document.createElementNS('http://www.w3.org/2000/svg','g');
       g.classList.add('process-region'); g.dataset.groupId=group.id;
       const path=document.createElementNS('http://www.w3.org/2000/svg','path');
-      path.setAttribute('d',pathData); path.setAttribute('fill',group.color+'18');
-      path.setAttribute('stroke',group.color); path.setAttribute('stroke-opacity','0.55');
+      path.setAttribute('d',pathData); path.setAttribute('fill',groupColor); path.setAttribute('fill-opacity','0.094');
+      path.setAttribute('stroke',groupColor); path.setAttribute('stroke-opacity','0.55');
       path.setAttribute('stroke-width','1.5'); path.setAttribute('stroke-dasharray','7 5');
       g.appendChild(path);
-      const top=boxes.reduce((best,b)=>b.y<best.y?b:best,boxes[0]);
+      const displayLabel = islandIndex ? `${group.label} · ${islandIndex+1}` : group.label;
+      const position = groupLabelPosition(boxes, displayLabel, [...nodeRects,...connectionLabelRects], occupiedLabels);
+      occupiedLabels.push(position.rect);
+      const labelGroup=document.createElementNS('http://www.w3.org/2000/svg','g');
+      labelGroup.classList.add('process-region-label');
+      labelGroup.dataset.groupId=group.id;
+      labelGroup.setAttribute('transform',`translate(${position.x} ${position.y})`);
+      const title=document.createElementNS('http://www.w3.org/2000/svg','title');
+      title.textContent=displayLabel;
+      const background=document.createElementNS('http://www.w3.org/2000/svg','rect');
+      background.setAttribute('x','0'); background.setAttribute('y','-16');
+      background.setAttribute('width',position.width); background.setAttribute('height','22');
+      background.setAttribute('rx','5'); background.setAttribute('fill','var(--bg2)');
+      background.setAttribute('stroke',groupColor); background.setAttribute('stroke-opacity','0.38');
       const text=document.createElementNS('http://www.w3.org/2000/svg','text');
-      text.classList.add('process-region-label'); text.setAttribute('x',top.x+10); text.setAttribute('y',top.y-8);
-      text.setAttribute('fill',group.color); text.textContent=islandIndex?`${group.label} · ${islandIndex+1}`:group.label;
-      g.appendChild(text); svgLayer.appendChild(g);
+      text.setAttribute('x','8'); text.setAttribute('y','0');
+      text.setAttribute('fill',groupColor); text.textContent=position.label;
+      labelGroup.append(title,background,text); g.appendChild(labelGroup); svgLayer.appendChild(g);
+      let raiseTimer;
+      labelGroup.addEventListener('mouseenter', () => {
+        raiseTimer = setTimeout(() => {
+          labelGroup.classList.add('is-raised');
+          svgLayer.appendChild(labelGroup);
+        }, 180);
+      });
+      labelGroup.addEventListener('mouseleave', () => {
+        clearTimeout(raiseTimer);
+        labelGroup.classList.remove('is-raised');
+      });
+      labelGroup.addEventListener('click', e => {
+        e.stopPropagation();
+        if (canEdit()) openGroupEditor(group.id);
+      });
     });
   });
+}
+
+function rectOverlapArea(a, b) {
+  const width = Math.max(0, Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x));
+  const height = Math.max(0, Math.min(a.y+a.h,b.y+b.h)-Math.max(a.y,b.y));
+  return width * height;
+}
+
+function groupLabelPosition(boxes, label, nodeRects, occupiedLabels) {
+  const minX=Math.min(...boxes.map(b=>b.x)), minY=Math.min(...boxes.map(b=>b.y));
+  const maxX=Math.max(...boxes.map(b=>b.x+b.w)), maxY=Math.max(...boxes.map(b=>b.y+b.h));
+  const regionWidth=Math.max(48,maxX-minX-20);
+  const glyphWidth = char => /[\u0000-\u00ff]/.test(char) ? (char === ' ' ? 3.5 : 6.5) : 11;
+  const fullLabel=String(label), maxTextWidth=Math.max(22,Math.min(224,regionWidth-16));
+  let visibleLabel='', usedWidth=0;
+  for (const char of fullLabel) {
+    const nextWidth=glyphWidth(char);
+    if (usedWidth+nextWidth>maxTextWidth) {
+      const ellipsisWidth=glyphWidth('…');
+      while (visibleLabel && usedWidth+ellipsisWidth>maxTextWidth) {
+        const chars=[...visibleLabel], removed=chars.pop();
+        visibleLabel=chars.join(''); usedWidth-=glyphWidth(removed);
+      }
+      visibleLabel+='…'; usedWidth+=ellipsisWidth;
+      break;
+    }
+    visibleLabel+=char; usedWidth+=nextWidth;
+  }
+  const width=Math.min(regionWidth,Math.max(48,Math.ceil(usedWidth+16))), height=22;
+  const candidates=[
+    {x:minX+10,y:minY+18},
+    {x:maxX-width-10,y:minY+18},
+    {x:minX+10,y:maxY-8},
+    {x:maxX-width-10,y:maxY-8},
+  ];
+  const obstacles=[...nodeRects,...occupiedLabels];
+  const scored=candidates.map((candidate,index)=>{
+    const rect={x:candidate.x,y:candidate.y-height+4,w:width,h:height};
+    return {...candidate,width,label:visibleLabel,rect,index,score:obstacles.reduce((sum,item)=>sum+rectOverlapArea(rect,item),0)};
+  });
+  return scored.sort((a,b)=>a.score-b.score||a.index-b.index)[0];
 }
 
 function ensureDefs() {
@@ -619,6 +742,12 @@ function renderConn(id) {
   const path = bezierPath(from, to, c.fromPort, c.toPort, c);
   const g    = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   g.dataset.connId = id;
+  const semantic = FlowDraftData.getSemantic(state, id);
+  const appearance = FlowDraftData.semanticStyle(semantic);
+  g.dataset.kind = semantic.kind;
+  const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+  title.textContent = [c.label, appearance.label, semantic.description].filter(Boolean).join(' · ');
+  g.appendChild(title);
 
   const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   hit.setAttribute('d', path); hit.setAttribute('fill', 'none');
@@ -629,13 +758,16 @@ function renderConn(id) {
 
   const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   line.setAttribute('d', path); line.setAttribute('fill', 'none');
-  line.setAttribute('stroke', state.selected.has('conn-' + id) ? '#4f8df5' : 'var(--conn, #7c8799)');
+  line.classList.add('conn-line');
+  line.setAttribute('stroke', state.selected.has('conn-' + id) ? '#4f8df5' : (appearance.color || 'var(--conn, #7c8799)'));
+  if (appearance.dash) line.setAttribute('stroke-dasharray', appearance.dash);
   line.setAttribute('stroke-width', '1.5');
   line.setAttribute('marker-end', 'url(#arrow)');
 
   g.appendChild(hit); g.appendChild(line);
 
-  if (c.label) {
+  const displayLabel = c.label || (semantic.kind !== 'unspecified' || semantic.outcome !== 'unspecified' ? appearance.label : '');
+  if (displayLabel) {
     const mid = bezierMidpoint(from, to, c.fromPort, c.toPort, c);
     const labelW = 160, labelH = 24;
     const fo  = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
@@ -645,12 +777,14 @@ function renderConn(id) {
     const div = document.createElement('div');
     div.className = 'conn-label';
     div.style.cssText = 'position:static;transform:none;text-align:center;width:fit-content;max-width:160px;margin:0 auto;';
-    div.textContent = c.label;
+    div.textContent = displayLabel;
+    div.addEventListener('click', e => { e.stopPropagation(); selectConn(id); });
     div.title = 'ドラッグして線の曲がり方を調整';
     div.addEventListener('pointerdown', e => startConnLabelDrag(e, id, mid));
     div.addEventListener('dblclick', () => {
+      if (!canEdit()) return;
       const nl = prompt('ラベル:', c.label);
-      if (nl !== null) { c.label = nl; snapshot(); renderConns(); }
+      if (nl !== null) { c.label = nl.slice(0, 4096); snapshot(); renderConns(); }
     });
     fo.appendChild(div); g.appendChild(fo);
   }
@@ -665,6 +799,7 @@ function removeConnEl(id) {
 }
 
 function selectConn(id) {
+  if (!canEdit()) { focusViewConnection(id); return; }
   state.selected.clear();
   state.selected.add('conn-' + id);
   updateRightPanel();
@@ -722,6 +857,7 @@ function bezierMidpoint(from, to, fp, tp, conn = null) {
 }
 
 function startConnLabelDrag(e, id, startMid) {
+  if (!canEdit()) return;
   if (e.button !== undefined && e.button !== 0) return;
   const c = state.conns[id];
   if (!c) return;
@@ -735,6 +871,7 @@ function startConnLabelDrag(e, id, startMid) {
   let moved = false;
 
   const onMove = e2 => {
+    if (!canEdit()) return;
     const cp = clientToCanvas(e2);
     const w  = canvasToWorld(cp.x, cp.y);
     c.bendX = w.x + offsetX;
@@ -772,7 +909,14 @@ function renderSelection() {
     if (el) el.classList.toggle('selected', state.selected.has(id));
   });
   const groupButton = document.getElementById('btn-group');
-  if (groupButton) groupButton.disabled = [...state.selected].filter(id => state.nodes[id]).length < 2;
+  if (groupButton) {
+    const selectedCount = [...state.selected].filter(id => state.nodes[id]).length;
+    groupButton.disabled = selectedCount < 2;
+    groupButton.dataset.tip = selectedCount < 2 ? 'ノードを2個以上選択（Shiftで複数選択）' : '処理領域にまとめる';
+    groupButton.setAttribute('aria-label', selectedCount < 2
+      ? 'ノードを2個以上選択してください。Shiftキーで複数選択できます'
+      : `選択中の${selectedCount}個のノードを処理領域にまとめる`);
+  }
   renderConns();
 }
 
@@ -780,6 +924,7 @@ function renderSelection() {
 // PORT / CONNECT
 // ──────────────────────────────────────────────
 function portMouseDown(e) {
+  if (!canEdit()) return;
   if (state.mode !== 'connect' && !e.altKey) return;
   e.stopPropagation(); e.preventDefault();
   const port = e.target.dataset.port, nodeId = e.target.dataset.node;
@@ -788,6 +933,7 @@ function portMouseDown(e) {
   const pos = getPortPos(nodeId, port);
   state.tempConn = { x1: pos.x, y1: pos.y, x2: pos.x, y2: pos.y };
   const onMove = e2 => {
+    if (!canEdit() || !state.tempConn) return;
     const cp = clientToCanvas(e2), w = canvasToWorld(cp.x, cp.y);
     state.tempConn.x2 = w.x; state.tempConn.y2 = w.y;
     renderConns();
@@ -808,6 +954,7 @@ function portMouseDown(e) {
 }
 
 function portTouchStart(e) {
+  if (!canEdit()) return;
   e.stopPropagation(); e.preventDefault();
   const port = e.target.dataset.port, nodeId = e.target.dataset.node;
   canvasWrap.classList.add('mode-connect');
@@ -815,6 +962,7 @@ function portTouchStart(e) {
   const pos = getPortPos(nodeId, port);
   state.tempConn = { x1: pos.x, y1: pos.y, x2: pos.x, y2: pos.y };
   const onMove = e2 => {
+    if (!canEdit() || !state.tempConn) return;
     e2.preventDefault();
     const cp = clientToCanvas(e2.touches[0]), w = canvasToWorld(cp.x, cp.y);
     state.tempConn.x2 = w.x; state.tempConn.y2 = w.y;
@@ -863,10 +1011,11 @@ let panning = false, panStart = null;
 const selBox = { active: false, start: null, isPanning: false };
 
 canvasWrap.addEventListener('mousedown', e => {
-  if (e.target !== canvasWrap && e.target !== canvas && e.target.id !== 'svg-layer') return;
+  if (canEdit() && e.target !== canvasWrap && e.target !== canvas && e.target.id !== 'svg-layer') return;
   if (e.button !== 0) return;
   panning  = true;
   panStart = { x: e.clientX - state.panX, y: e.clientY - state.panY };
+  if (!canEdit()) return;
   e.preventDefault();
   const cp = clientToCanvas(e);
   selBox.start = cp; selBox.active = true; selBox.isPanning = false;
@@ -928,7 +1077,7 @@ document.addEventListener('mouseup', e => {
 let touchPanStart = null, singleTouchPan = null;
 canvasWrap.addEventListener('touchstart', e => {
   if (e.touches.length === 1 &&
-      (e.target === canvasWrap || e.target === canvas || e.target.id === 'svg-layer')) {
+      (!canEdit() || e.target === canvasWrap || e.target === canvas || e.target.id === 'svg-layer')) {
     const t = e.touches[0];
     singleTouchPan = { x: t.clientX - state.panX, y: t.clientY - state.panY };
   }
@@ -1002,6 +1151,7 @@ function updateZoomLabel() {
 // MODE
 // ──────────────────────────────────────────────
 function setMode(m) {
+  if (!canEdit()) return;
   state.mode = m;
   document.getElementById('btn-conn')?.classList.toggle('active',   m === 'connect');
   document.getElementById('btn-select')?.classList.toggle('active', m === 'select');
@@ -1024,6 +1174,7 @@ function updateMobileGroupToolbar() {
 }
 
 function startMobileGroupSelection() {
+  if (!canEdit()) return;
   closeModal('modal-settings');
   state.selected.clear();
   setMode('group');
@@ -1053,14 +1204,17 @@ function finishMobileGroupSelection() {
 // LABEL EDIT
 // ──────────────────────────────────────────────
 function startEditLabel(id) {
+  if (!canEdit()) return;
   const n = state.nodes[id];
   const labelEl = document.getElementById('label-' + id);
   if (!labelEl) return;
   const ta = document.createElement('textarea');
   ta.className = 'node-label-input'; ta.value = n.label; ta.rows = 1;
+  ta.maxLength = 4096;
   labelEl.replaceWith(ta);
   ta.focus(); ta.select();
   const finish = () => {
+    if (!canEdit()) return;
     n.label = ta.value.trim() || n.label;
     snapshot(); renderNode(id); renderConns();
   };
@@ -1076,6 +1230,7 @@ function startEditLabel(id) {
 // RIGHT PANEL
 // ──────────────────────────────────────────────
 function updateRightPanel() {
+  if (!canEdit()) { renderViewPanel(); return; }
   if (state.selected.size === 1) {
     const id = [...state.selected][0];
     openRightPanel();
@@ -1101,27 +1256,63 @@ function renderGroupControls(nodeIds) {
   groups.forEach(group => {
     const row = document.createElement('div');
     row.className = 'group-control';
-    const label = document.createElement('span');
+    const label = document.createElement('button');
+    label.type = 'button';
     label.className = 'group-control-label';
     label.style.setProperty('--group-color', group.color);
     label.textContent = group.label;
-    const rename = document.createElement('button');
-    rename.className = 'secondary-btn'; rename.textContent = '名称変更';
-    rename.addEventListener('click', () => {
-      const next = prompt('処理領域の名前:', group.label);
-      if (next === null) return;
-      group.label = next.trim() || group.label;
-      snapshot(); renderConns(); updateRightPanel();
-    });
+    label.setAttribute('aria-label', `処理領域「${group.label}」を編集`);
+    label.addEventListener('click', () => openGroupEditor(group.id));
     const remove = document.createElement('button');
     remove.className = 'secondary-btn group-remove'; remove.textContent = '解除';
     remove.addEventListener('click', () => {
       delete state.groups[group.id];
       snapshot(); renderConns(); updateRightPanel(); notify('処理領域を解除しました');
     });
-    row.append(label, rename, remove); section.appendChild(row);
+    row.append(label, remove); section.appendChild(row);
   });
   rightPanel.appendChild(section);
+}
+
+function openGroupEditor(groupId) {
+  if (!canEdit()) return;
+  const group = state.groups[groupId];
+  if (!group) return;
+  openRightPanel();
+  rightPanel.innerHTML = `<div class="prop-section group-editor">
+    ${panelHeader('処理領域')}
+    <label class="prop-row"><span class="prop-label">名前</span><input class="prop-input" id="group-name" maxlength="4096" value="${escHtml(group.label)}"></label>
+    <label class="prop-row"><span class="prop-label">カラー</span><input class="group-color-input" id="group-color" type="color" value="${escHtml(group.color || '#5b9cf6')}"></label>
+    <label class="prop-row"><span class="prop-label">ノードとの余白</span><input id="group-padding" type="range" min="16" max="64" step="2" value="${group.padding ?? 28}"><output id="group-padding-value">${group.padding ?? 28}px</output></label>
+    <p class="prop-help">領域は所属ノードに合わせて移動します。領域名または所属ノードから、この編集画面を開けます。</p>
+  </div>
+  <div class="prop-section"><button class="del-btn" id="group-remove">処理領域を解除</button></div>`;
+  bindPanelClose();
+  const name = document.getElementById('group-name');
+  name.addEventListener('input', e => {
+    group.label = e.target.value.slice(0,4096);
+    renderConns();
+  });
+  name.addEventListener('change', e => {
+    group.label = e.target.value.trim() || '処理グループ';
+    e.target.value = group.label;
+    snapshot(); renderConns();
+  });
+  document.getElementById('group-color').addEventListener('input', e => {
+    group.color = e.target.value;
+    renderConns();
+  });
+  document.getElementById('group-color').addEventListener('change', () => snapshot());
+  document.getElementById('group-padding').addEventListener('input', e => {
+    group.padding = Number(e.target.value);
+    document.getElementById('group-padding-value').textContent = `${group.padding}px`;
+    renderConns();
+  });
+  document.getElementById('group-padding').addEventListener('change', () => snapshot());
+  document.getElementById('group-remove').addEventListener('click', () => {
+    delete state.groups[group.id];
+    snapshot(); renderConns(); updateRightPanel(); notify('処理領域を解除しました');
+  });
 }
 
 function buildColorPalette(n, id) {
@@ -1158,11 +1349,11 @@ function renderNodeProps(id) {
       ${panelHeader('プロパティ')}
       <div class="prop-row">
         <div class="prop-label">ラベル</div>
-        <textarea class="prop-input" id="prop-label" rows="2" aria-label="ラベル">${n.label}</textarea>
+        <textarea class="prop-input" id="prop-label" rows="2" maxlength="4096" aria-label="ラベル">${escHtml(n.label)}</textarea>
       </div>
       <div class="prop-row">
         <div class="prop-label">サブテキスト</div>
-        <textarea class="prop-input" id="prop-sub" rows="1" aria-label="サブテキスト" style="overflow:hidden;field-sizing:content;min-height:28px">${n.sublabel || ''}</textarea>
+        <textarea class="prop-input" id="prop-sub" rows="1" maxlength="4096" aria-label="サブテキスト" style="overflow:hidden;field-sizing:content;min-height:28px">${escHtml(n.sublabel)}</textarea>
       </div>
       <div class="prop-row">
         <div class="prop-label">ノードタイプ</div>
@@ -1193,6 +1384,7 @@ function renderNodeProps(id) {
     n.type = e.target.value; snapshot(); renderNode(id); renderConns();
   });
   document.getElementById('prop-del').addEventListener('click', () => removeNode(id));
+  renderGroupControls([id]);
 }
 
 function renderConnProps(id) {
@@ -1203,7 +1395,7 @@ function renderConnProps(id) {
       ${panelHeader('接続')}
       <div class="prop-row">
         <div class="prop-label">ラベル</div>
-        <input class="prop-input" id="conn-label" value="${c.label || ''}" aria-label="接続ラベル">
+        <input class="prop-input" id="conn-label" value="${escHtml(c.label)}" aria-label="接続ラベル" maxlength="4096">
       </div>
       <div class="prop-help">ラベルをドラッグすると線の曲がり方を調整できます。</div>
     </div>
@@ -1215,6 +1407,7 @@ function renderConnProps(id) {
       <button class="del-btn" id="conn-del">接続を削除</button>
     </div>`;
   bindPanelClose();
+  appendSemanticEditor(id);
   document.getElementById('conn-label').addEventListener('change', e => { c.label = e.target.value; snapshot(); renderConns(); });
   document.getElementById('conn-reset-bend')?.addEventListener('click', () => {
     delete c.bendX;
@@ -1234,12 +1427,14 @@ function renderConnProps(id) {
 // ──────────────────────────────────────────────
 let ctxTarget = null;
 function showCtxMenu(e, nodeId) {
+  if (!canEdit()) return;
   ctxTarget = nodeId;
   const menu = document.getElementById('ctx-menu');
   menu.classList.add('open');
   menu.style.left = e.clientX + 'px'; menu.style.top = e.clientY + 'px';
 }
 function showConnCtxMenu(e, connId) {
+  if (!canEdit()) return;
   ctxTarget = 'conn-' + connId;
   const menu = document.getElementById('ctx-menu');
   menu.classList.add('open');
@@ -1255,6 +1450,7 @@ document.getElementById('ctx-dup').addEventListener('click', () => {
   addNode(n.type, n.x + 20, n.y + 20, n.label, n.sublabel, n.color);
 });
 document.getElementById('ctx-del').addEventListener('click', () => {
+  if (!canEdit()) return;
   if (!ctxTarget) return;
   if (ctxTarget.startsWith('conn-')) {
     const id = ctxTarget.replace('conn-', '');
@@ -1373,23 +1569,20 @@ function updateStatus() {
 // SHARE URL
 // ──────────────────────────────────────────────
 function generateShareUrl() {
-  const data    = { nodes: state.nodes, conns: state.conns, groups: state.groups, nextId: state.nextId, name: getDiagramName() };
+  const data = getDocument();
   const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(data))));
-  return window.location.href.split('?')[0] + '?d=' + encoded;
+  return window.location.href.split(/[?#]/)[0] + '?d=' + encodeURIComponent(encoded);
 }
 function loadFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const d = params.get('d');
   if (!d) return false;
   try {
-    const data = JSON.parse(decodeURIComponent(escape(atob(d))));
-    state.nodes  = data.nodes  || {};
-    state.conns  = data.conns  || {};
-    state.groups = data.groups || {};
-    state.nextId = data.nextId || 1;
-    if (data.name) setDiagramName(data.name);
+    if (d.length > 7000000) throw new Error('共有URLが大きすぎます');
+    const data = JSON.parse(decodeURIComponent(escape(atob(d.replace(/ /g, '+')))));
+    applyDocument(data);
     return true;
-  } catch(e) { return false; }
+  } catch(e) { notify('共有URLを読み込めませんでした。保存データを確認します。'); return false; }
 }
 
 document.getElementById('btn-share').addEventListener('click', () => {
@@ -1478,10 +1671,12 @@ function buildTplGrid() {
     el.className = 'tpl-item';
     el.innerHTML = `<div class="tpl-name">${t.name}</div><div class="tpl-desc">${t.desc}</div>`;
     el.addEventListener('click', () => {
+      if (!canEdit()) return;
+      state.saveBlocked = false;
       snapshot(); // 適用前を履歴に保存
       Object.keys(state.nodes).forEach(id => { const el = document.getElementById('node-' + id); if (el) el.remove(); });
       Object.keys(state.conns).forEach(id => removeConnEl(id));
-      state.nodes = {}; state.conns = {}; state.groups = {}; state.selected.clear();
+      state.nodes = {}; state.conns = {}; state.groups = {}; state.semantics = { connections: {} }; state.selected.clear();
       svgLayer.innerHTML = ''; state.nextId = 1;
       setDiagramName(t.name);
       const origSnap = window.snapshot; window.snapshot = () => {};
@@ -1501,8 +1696,10 @@ document.getElementById('btn-tpl').addEventListener('click', () => { buildTplGri
 // NEW
 document.getElementById('btn-new').addEventListener('click', () => openModal('modal-new'));
 document.getElementById('confirm-new').addEventListener('click', () => {
+  if (!canEdit()) return;
+  state.saveBlocked = false;
   Object.keys(state.nodes).forEach(id => { const el = document.getElementById('node-' + id); if (el) el.remove(); });
-  state.nodes = {}; state.conns = {}; state.groups = {}; state.selected.clear(); svgLayer.innerHTML = '';
+  state.nodes = {}; state.conns = {}; state.groups = {}; state.semantics = { connections: {} }; state.selected.clear(); svgLayer.innerHTML = '';
   state.nextId = 1;
   setDiagramName('無題のフロー');
   applyCanvasBg('', '', false);
@@ -1575,8 +1772,15 @@ document.addEventListener('keydown', e => {
       return;
     }
   }
+  if (!canEdit()) {
+    if (e.target.matches('input, textarea, select, button')) return;
+    if (e.key === 'Escape') clearViewFocus();
+    if (e.key.toLowerCase() === 'f') fitView();
+    if (['Delete', 'Backspace', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key) || ((e.ctrlKey || e.metaKey) && ['z', 'y', 'a'].includes(e.key.toLowerCase()))) e.preventDefault();
+    return;
+  }
   if (e.altKey) canvasWrap.classList.add('mode-connect');
-  if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+  if (document.activeElement.matches('input, textarea, select')) return;
   if (e.key === 'Delete' || e.key === 'Backspace') {
     const toDelete = [...state.selected];
     toDelete.forEach(id => {
@@ -1628,6 +1832,7 @@ applyResponsiveUI();
 const mAdd      = document.getElementById('m-add');
 const mConnect  = document.getElementById('m-connect');
 const mFit      = document.getElementById('m-fit');
+const mGroup    = document.getElementById('m-group');
 const mReset    = document.getElementById('m-reset');
 const mExport   = document.getElementById('m-export');
 const mUndo     = document.getElementById('m-undo');
@@ -1666,6 +1871,7 @@ if (mConnect) {
 if (mExport)  { mExport.addEventListener('click',  () => openModal('modal-export')); }
 if (mUndo)    { mUndo.addEventListener('click',    () => { undo(); notify('元に戻しました'); }); }
 if (mFit)     { mFit.addEventListener('click',     () => { fitView(); notify('全体を表示'); }); }
+if (mGroup)   { mGroup.addEventListener('click', startMobileGroupSelection); }
 if (mReset)   { mReset.addEventListener('click', resetViewport); }
 if (mSettings) { mSettings.addEventListener('click', () => openModal('modal-settings')); }
 
@@ -1677,7 +1883,6 @@ document.getElementById('settings-canvas-bg')?.addEventListener('click', () => {
   closeModal('modal-settings');
   document.getElementById('btn-canvas-bg').click();
 });
-document.getElementById('settings-group')?.addEventListener('click', startMobileGroupSelection);
 document.getElementById('mobile-group-cancel')?.addEventListener('click', cancelMobileGroupSelection);
 document.getElementById('mobile-group-create')?.addEventListener('click', finishMobileGroupSelection);
 document.getElementById('settings-share')?.addEventListener('click', () => {
