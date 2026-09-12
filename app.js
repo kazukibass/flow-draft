@@ -1874,6 +1874,7 @@ if (mFit)     { mFit.addEventListener('click',     () => { fitView(); notify('å…
 if (mGroup)   { mGroup.addEventListener('click', startMobileGroupSelection); }
 if (mReset)   { mReset.addEventListener('click', resetViewport); }
 if (mSettings) { mSettings.addEventListener('click', () => openModal('modal-settings')); }
+document.getElementById('mobile-top-menu')?.addEventListener('click', () => openModal('modal-settings'));
 
 // kazuki-ui navigation contract: bottom / overlay / hide / glass.
 // The canvas keeps its geometry while only the floating controls move.
