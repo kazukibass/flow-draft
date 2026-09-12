@@ -35,6 +35,12 @@
   --node-loop-end-bg: #fff3df;   --node-loop-end-border: #f0a040;   --node-loop-end-type: #c47a20;
   --safe-top: max(12px, env(safe-area-inset-top));
   --safe-bottom: max(16px, env(safe-area-inset-bottom));
+  /* kazuki-ui navigation contract: behavior stays shared; theme stays local. */
+  --nav-state-duration: 120ms;
+  --nav-motion-duration: 220ms;
+  --nav-hover-mix: 8%;
+  --nav-pressed-mix: 14%;
+  --nav-selected-mix: 18%;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -363,6 +369,7 @@ button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px
   display: flex;
   gap: 8px;
   z-index: 300;
+  transition: transform var(--nav-motion-duration) ease, opacity var(--nav-state-duration) ease;
 }
 
 .mobile-fab {
@@ -383,13 +390,35 @@ button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px
   font-size: 12px;
   white-space: nowrap;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color var(--nav-state-duration) ease, border-color var(--nav-state-duration) ease, color var(--nav-state-duration) ease, opacity var(--nav-state-duration) ease, transform var(--nav-state-duration) ease;
 }
+.mobile-fab:hover { background: color-mix(in srgb, var(--accent) var(--nav-hover-mix), var(--bg2)); }
 .mobile-fab:active { opacity: 0.7; transform: scale(0.96); }
 .mobile-fab svg { width: 16px; height: 16px; flex-shrink: 0; }
 .mobile-fab.icon-only { width: 44px; padding: 0; }
 .mobile-fab.primary { background: var(--accent2); border-color: var(--accent); color: #fff; }
 .mobile-fab.connect-active { border-color: var(--accent); color: var(--accent); background: rgba(91,156,246,0.15); }
+.mobile-nav-toggle {
+  display: none;
+  position: fixed;
+  right: 12px;
+  bottom: calc(var(--safe-bottom) + 52px);
+  z-index: 301;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border2);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--bg2) 92%, transparent);
+  color: var(--text2);
+  box-shadow: 0 2px 16px var(--shadow);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: bottom var(--nav-motion-duration) ease, background-color var(--nav-state-duration) ease, transform var(--nav-motion-duration) ease;
+}
+.mobile-nav-toggle:hover { background: color-mix(in srgb, var(--accent) var(--nav-hover-mix), var(--bg2)); }
+.mobile-nav-toggle:active { background: color-mix(in srgb, var(--accent) var(--nav-pressed-mix), var(--bg2)); }
+#mobile-toolbar[data-nav-state="collapsed"] .mobile-bottom-row { transform: translate(-50%, calc(100% + var(--safe-bottom) + 12px)); opacity: 0; pointer-events: none; }
+#mobile-toolbar[data-nav-state="collapsed"] .mobile-nav-toggle { bottom: var(--safe-bottom); transform: rotate(180deg); }
 
 /* ── MOBILE BREAKPOINT ── */
 @media (max-width: 900px) {
@@ -471,6 +500,7 @@ button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px
   }
 
   #mobile-toolbar { display: block; }
+  .mobile-nav-toggle { display: grid; place-items: center; }
   #mobile-toolbar button { pointer-events: auto; }
   #mobile-group-toolbar:not([hidden]) {
     position:fixed;
@@ -531,4 +561,7 @@ button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px
 #mobile-node-grid .palette-item { padding: 6px 4px; }
 @media (max-width: 360px) {
   .mobile-bottom-row { gap: 5px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mobile-bottom-row, .mobile-nav-toggle, .mobile-fab { transition-duration: 0.01ms !important; }
 }
