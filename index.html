@@ -221,7 +221,7 @@
 </div>
 
 <!-- MOBILE TOOLBAR -->
-<div id="mobile-toolbar">
+<div id="mobile-toolbar" data-nav-placement="bottom" data-nav-layout="overlay" data-nav-collapse="hide" data-nav-state="expanded" data-nav-surface="glass">
   <div class="mobile-bottom-row">
     <button class="mobile-fab icon-only primary" id="m-add" title="ノードを追加" aria-label="ノードを追加">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
@@ -242,6 +242,9 @@
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="14" y2="12"/></svg>
     </button>
   </div>
+  <button class="mobile-nav-toggle" id="mobile-nav-toggle" type="button" aria-controls="mobile-toolbar" aria-expanded="true" aria-label="ナビゲーションをしまう">
+    <span aria-hidden="true">⌄</span>
+  </button>
 </div>
 
 <div id="mobile-group-toolbar" hidden aria-live="polite">
