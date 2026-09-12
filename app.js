@@ -1875,6 +1875,21 @@ if (mGroup)   { mGroup.addEventListener('click', startMobileGroupSelection); }
 if (mReset)   { mReset.addEventListener('click', resetViewport); }
 if (mSettings) { mSettings.addEventListener('click', () => openModal('modal-settings')); }
 
+// kazuki-ui navigation contract: bottom / overlay / hide / glass.
+// The canvas keeps its geometry while only the floating controls move.
+const mobileToolbar = document.getElementById('mobile-toolbar');
+const mobileNavToggle = document.getElementById('mobile-nav-toggle');
+function setMobileNavState(next) {
+  if (!mobileToolbar || !mobileNavToggle) return;
+  const expanded = next === 'expanded';
+  mobileToolbar.dataset.navState = next;
+  mobileNavToggle.setAttribute('aria-expanded', String(expanded));
+  mobileNavToggle.setAttribute('aria-label', expanded ? 'ナビゲーションをしまう' : 'ナビゲーションを表示');
+}
+mobileNavToggle?.addEventListener('click', () => {
+  setMobileNavState(mobileToolbar?.dataset.navState === 'collapsed' ? 'expanded' : 'collapsed');
+});
+
 document.getElementById('settings-theme')?.addEventListener('click', () => {
   toggleTheme(); closeModal('modal-settings');
   notify(state.theme === 'dark' ? 'ダークモード' : 'ライトモード');
