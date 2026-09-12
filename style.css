@@ -360,6 +360,7 @@ button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px
 /* ── MOBILE FAB ── */
 #mobile-toolbar { display: none; }
 #mobile-group-toolbar { display:none; }
+#mobile-topbar { display:none; }
 
 .mobile-bottom-row {
   position: fixed;
@@ -422,6 +423,23 @@ button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px
 
 /* ── MOBILE BREAKPOINT ── */
 @media (max-width: 900px) {
+  #mobile-topbar {
+    height: 42px;
+    flex: 0 0 42px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px;
+    background: color-mix(in srgb, var(--bg2) 92%, transparent);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    z-index: 100;
+  }
+  .mobile-brand { font:500 12px var(--mono); color:var(--text2); letter-spacing:.05em; }
+  .mobile-brand span { color:var(--accent); }
+  .mobile-kicker { font:500 8px var(--mono); color:var(--text3); letter-spacing:.12em; }
+  #mobile-top-menu { margin-left:auto; width:34px; height:32px; border:1px solid var(--border); border-radius:8px; background:transparent; color:var(--text2); font-size:15px; }
   #toolbar    { display: none; }
   #statusbar  { display: none; }
   #left-panel { display: none; }
